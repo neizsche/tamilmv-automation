@@ -1,0 +1,20 @@
+{
+  "name": "tamilmv-automation",
+  "version": "1.0.0",
+  "description": "Automate TamilMV RSS feeds to QBittorrent and Radarr",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.5.0",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^17.2.3",
+    "fast-xml-parser": "^5.3.2",
+    "form-data": "^4.0.0",
+    "rss-parser": "^1.0.0"
+  }
+}

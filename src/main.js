@@ -1,2 +1,2 @@
-const rssMonitor = require("./services/rssMonitor");
-rssMonitor.startMonitoring();
+import { startMonitoring } from './services/rssMonitor.js';
+startMonitoring();

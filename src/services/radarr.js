@@ -1,17 +1,17 @@
-const axios = require("axios");
-const config = require("../config");
-const { log } = require("../utils/logger");
-const { extractMovieName } = require("../utils/helpers");
-const notifier = require("./notifier");
+import axios from 'axios';
+import { RADARR_URL, RADARR_API_KEY, RADARR_QUALITY_PROFILE_ID, RADARR_ROOT_FOLDER } from '../config/index.js';
+import { log } from '../utils/logger.js';
+import { extractMovieName } from '../utils/helpers.js';
+import notifier from './notifier.js';
 
 class RadarrClient {
   async addMovie(torrentName) {
     const movieName = extractMovieName(torrentName);
-    
+
     try {
-      const lookupResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie/lookup`, {
+      const lookupResponse = await get(`${RADARR_URL}/api/v3/movie/lookup`, {
         params: { term: movieName },
-        headers: { 'X-Api-Key': config.RADARR_API_KEY }
+        headers: { 'X-Api-Key': RADARR_API_KEY },
       });
 
       if (!lookupResponse.data?.length) {
@@ -20,75 +20,72 @@ class RadarrClient {
       }
 
       const movieData = lookupResponse.data[0];
-      
-      const existingResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie`, {
-        headers: { 'X-Api-Key': config.RADARR_API_KEY }
+
+      const existingResponse = await get(`${RADARR_URL}/api/v3/movie`, {
+        headers: { 'X-Api-Key': RADARR_API_KEY },
       });
-      
-      const existingMovie = existingResponse.data.find(m => m.tmdbId === movieData.tmdbId);
+
+      const existingMovie = existingResponse.data.find((m) => m.tmdbId === movieData.tmdbId);
       if (existingMovie) {
-        log.warning(`Movie already exists: ${movieData.title} (${movieData.year})`);
         return;
       }
 
       const movieToAdd = {
         title: movieData.title,
-        qualityProfileId: config.RADARR_QUALITY_PROFILE_ID,
+        qualityProfileId: RADARR_QUALITY_PROFILE_ID,
         titleSlug: movieData.titleSlug,
         images: movieData.images,
         tmdbId: movieData.tmdbId,
         year: movieData.year,
-        rootFolderPath: config.RADARR_ROOT_FOLDER,
+        rootFolderPath: RADARR_ROOT_FOLDER,
         monitored: true,
-        addOptions: { searchForMovie: false }
+        addOptions: { searchForMovie: false },
       };
 
-      await axios.post(`${config.RADARR_URL}/api/v3/movie`, movieToAdd, {
+      await post(`${RADARR_URL}/api/v3/movie`, movieToAdd, {
         headers: {
-          'X-Api-Key': config.RADARR_API_KEY,
-          'Content-Type': 'application/json'
-        }
+          'X-Api-Key': RADARR_API_KEY,
+          'Content-Type': 'application/json',
+        },
       });
 
       log.success(`Added to Radarr: ${movieData.title} (${movieData.year})`);
       await notifier.notifyMovieAdded(movieData.title, movieData.year);
-      
     } catch (error) {
       log.error(`Failed to add ${movieName}`, error.response?.data?.message || error.message);
     }
   }
 
-async checkMovieExists(torrentName) {
-  const movieName = extractMovieName(torrentName);
-  
-  try {
-    const lookupResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie/lookup`, {
-      params: { term: movieName },
-      headers: { 'X-Api-Key': config.RADARR_API_KEY }
-    });
+  async checkMovieExists(torrentName) {
+    const movieName = extractMovieName(torrentName);
 
-    if (!lookupResponse.data?.length) {
+    try {
+      const lookupResponse = await get(`${RADARR_URL}/api/v3/movie/lookup`, {
+        params: { term: movieName },
+        headers: { 'X-Api-Key': RADARR_API_KEY },
+      });
+
+      if (!lookupResponse.data?.length) {
+        return false;
+      }
+
+      const movieData = lookupResponse.data[0];
+
+      const existingResponse = await get(`${RADARR_URL}/api/v3/movie`, {
+        headers: { 'X-Api-Key': RADARR_API_KEY },
+      });
+
+      const existingMovie = existingResponse.data.find((m) => m.tmdbId === movieData.tmdbId);
+
+      if (!existingMovie) {
+        return false;
+      }
+
+      return existingMovie.hasFile;
+    } catch {
       return false;
     }
-
-    const movieData = lookupResponse.data[0];
-    
-    const existingResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie`, {
-      headers: { 'X-Api-Key': config.RADARR_API_KEY }
-    });
-    
-    const existingMovie = existingResponse.data.find(m => m.tmdbId === movieData.tmdbId);
-    
-    if (!existingMovie) {
-      return false;
-    }
-    
-    return existingMovie.hasFile;
-    
-  } catch (error) {
-    return false;
   }
 }
-}
 
-module.exports = new RadarrClient();
+export default new RadarrClient();

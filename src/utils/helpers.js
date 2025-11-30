@@ -1,11 +1,10 @@
-const fs = require("fs");
-const path = require("path");
+import { existsSync, mkdirSync } from 'fs';
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const ensureFolderExists = (folderPath) => {
-  if (!fs.existsSync(folderPath)) {
-    fs.mkdirSync(folderPath, { recursive: true });
+  if (!existsSync(folderPath)) {
+    mkdirSync(folderPath, { recursive: true });
   }
 };
 
@@ -20,9 +19,9 @@ const formatTorrentTitle = (url) => {
   return match ? match[1] : url;
 };
 
-module.exports = {
+export default {
   wait,
   ensureFolderExists,
   extractMovieName,
-  formatTorrentTitle
+  formatTorrentTitle,
 };

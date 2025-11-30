@@ -163,29 +163,34 @@ class TorrentProcessor {
     return uploadSuccess;
   }
 
-  async processNewItems(newItems) {
-    const torrentLinks = [];
+async processNewItems(newItems) {
+  // Parallel RSS scraping
+  const scrapePromises = newItems.map(item => this.scrapeWithRetries(item.link));
+  const results = await Promise.allSettled(scrapePromises);
+  const torrentLinks = results.filter(r => r.status === 'fulfilled').map(r => r.value).flat();
 
-    // Scrape all torrent links
-    let total = newItems.length;
-    for (let i = 0; i < total; i++) {
-      const links = await this.scrapeWithRetries(newItems[i].link);
-      torrentLinks.push(...links);
-      displayProgressBar(i + 1, total, "Tamilmv movie links scraped");
-    }
-
-    // Process torrent links
-    if (torrentLinks.length > 0) {
-      total = torrentLinks.length;
-      for (let i = 0; i < total; i++) {
-        await wait(1000);
-        await this.processTorrentLink(torrentLinks[i]);
-        displayProgressBar(i + 1, total, "torrents added");
+  if (torrentLinks.length > 0) {
+    const BATCH_SIZE = 50;
+    const TOO_MANY_FOR_PARALLEL = 200;
+    
+    if (torrentLinks.length <= TOO_MANY_FOR_PARALLEL) {
+      log.info(`Processing ${torrentLinks.length} torrents in parallel`);
+      await Promise.allSettled(torrentLinks.map(link => this.processTorrentLink(link)));
+    } else {
+      log.info(`Processing ${torrentLinks.length} torrents in batches`);
+      for (let i = 0; i < torrentLinks.length; i += BATCH_SIZE) {
+        const batch = torrentLinks.slice(i, i + BATCH_SIZE);
+        await Promise.allSettled(batch.map(link => this.processTorrentLink(link)));
+        
+        if (i + BATCH_SIZE < torrentLinks.length) {
+          await wait(10);
+        }
       }
     }
-
-    await this.cleanUnwantedTorrents();
   }
+
+  await this.cleanUnwantedTorrents();
+}
 }
 
 module.exports = new TorrentProcessor();

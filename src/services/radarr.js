@@ -9,7 +9,6 @@ class RadarrClient {
     const movieName = extractMovieName(torrentName);
     
     try {
-      // Lookup movie
       const lookupResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie/lookup`, {
         params: { term: movieName },
         headers: { 'X-Api-Key': config.RADARR_API_KEY }
@@ -22,7 +21,6 @@ class RadarrClient {
 
       const movieData = lookupResponse.data[0];
       
-      // Check if movie already exists
       const existingResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie`, {
         headers: { 'X-Api-Key': config.RADARR_API_KEY }
       });
@@ -33,7 +31,6 @@ class RadarrClient {
         return;
       }
 
-      // Add movie
       const movieToAdd = {
         title: movieData.title,
         qualityProfileId: config.RADARR_QUALITY_PROFILE_ID,
@@ -60,6 +57,38 @@ class RadarrClient {
       log.error(`Failed to add ${movieName}`, error.response?.data?.message || error.message);
     }
   }
+
+async checkMovieExists(torrentName) {
+  const movieName = extractMovieName(torrentName);
+  
+  try {
+    const lookupResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie/lookup`, {
+      params: { term: movieName },
+      headers: { 'X-Api-Key': config.RADARR_API_KEY }
+    });
+
+    if (!lookupResponse.data?.length) {
+      return false;
+    }
+
+    const movieData = lookupResponse.data[0];
+    
+    const existingResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie`, {
+      headers: { 'X-Api-Key': config.RADARR_API_KEY }
+    });
+    
+    const existingMovie = existingResponse.data.find(m => m.tmdbId === movieData.tmdbId);
+    
+    if (!existingMovie) {
+      return false;
+    }
+    
+    return existingMovie.hasFile;
+    
+  } catch (error) {
+    return false;
+  }
+}
 }
 
 module.exports = new RadarrClient();

@@ -124,32 +124,46 @@ class TorrentProcessor {
     return torrentsToDelete;
   }
 
-  async cleanUnwantedTorrents() {
-    try {
-      const filteredTorrents = await qbittorrent.getTorrents(true);
-      
-      // Delete by size
-      const sizeTorrentsToDelete = filteredTorrents.filter(
-        torrent => torrent.size < 1 * 1024 ** 3 || torrent.size > 3 * 1024 ** 3
-      );
-      await qbittorrent.manageTorrents(sizeTorrentsToDelete, "delete", "inappropriate size");
-      
-      // Delete duplicates
-      const updatedTorrents = await qbittorrent.getTorrents();
-      const duplicateTorrentsToDelete = this.identifyTorrentsToDelete(updatedTorrents);
-      await qbittorrent.manageTorrents(duplicateTorrentsToDelete, "delete", "duplicate torrent");
-      
-      // Start remaining torrents
-      const finalTorrents = await qbittorrent.getTorrents(true);
-      for (const torrent of finalTorrents) {
+async cleanUnwantedTorrents() {
+  try {
+    const filteredTorrents = await qbittorrent.getTorrents(true);
+    
+    // Delete by size
+    const sizeTorrentsToDelete = filteredTorrents.filter(
+      torrent => torrent.size < 1 * 1024 ** 3 || torrent.size > 3 * 1024 ** 3
+    );
+    await qbittorrent.manageTorrents(sizeTorrentsToDelete, "delete", "inappropriate size");
+    
+    // Delete duplicates
+    const updatedTorrents = await qbittorrent.getTorrents();
+    const duplicateTorrentsToDelete = this.identifyTorrentsToDelete(updatedTorrents);
+    await qbittorrent.manageTorrents(duplicateTorrentsToDelete, "delete", "duplicate torrent");
+    
+    // Check Radarr for existing available movies before starting
+    const finalTorrents = await qbittorrent.getTorrents(true);
+    const torrentsToStart = [];
+    const torrentsToDelete = [];
+
+    for (const torrent of finalTorrents) {
+      const movieExists = await radarr.checkMovieExists(torrent.name);
+      if (movieExists) {
+        torrentsToDelete.push(torrent);
+      } else {
+        torrentsToStart.push(torrent);
         await radarr.addMovie(torrent.name);
       }
-      await qbittorrent.manageTorrents(finalTorrents, "start");
-      
-    } catch (error) {
-      log.error("Error cleaning unwanted torrents", error);
     }
+
+    // Delete torrents for movies that already exist in Radarr
+    await qbittorrent.manageTorrents(torrentsToDelete, "delete", "movie already in Radarr");
+    
+    // Start only the torrents for new movies
+    await qbittorrent.manageTorrents(torrentsToStart, "start");
+    
+  } catch (error) {
+    log.error("Error cleaning unwanted torrents", error);
   }
+}
 
   async processTorrentLink(torrentLink) {
     const fileName = `${Date.now()}.torrent`;

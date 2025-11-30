@@ -112,9 +112,10 @@ class QBittorrentClient {
 
         const movieName = torrent.name.split(/\(\d{4}\)/)[0].trim().split("- ")[1]?.toUpperCase() || torrent.name;
         const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
-        
+        if (action === "start") {
         log.success(`${action.toUpperCase()}${reason ? ` ${reason}` : ''} ${movieName} (${sizeGB} GB)`);
-      } catch (error) {
+      }
+    } catch (error) {
         log.error(`Failed to ${action} torrent: ${torrent.name}`);
       }
     }

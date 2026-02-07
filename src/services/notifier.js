@@ -19,10 +19,11 @@ class Notifier {
           'Content-Type': 'application/json'
         }
       });
-      
-      log.success(`Notification sent: ${title}`);
+
+      return true;
     } catch (error) {
       log.error("Failed to send notification", error.message);
+      return false;
     }
   }
 
@@ -30,7 +31,7 @@ class Notifier {
     const title = "🎬 New Movie Added";
     const message = `${movieTitle} (${movieYear})`;
     const tags = ["movie_camera", "tamilmv"];
-    
+
     await this.sendNotification(title, message, tags);
   }
 
@@ -38,7 +39,7 @@ class Notifier {
     const title = "🚨 Automation Error";
     const message = `Operation: ${operation}\nError: ${error}`;
     const tags = ["rotating_light"];
-    
+
     await this.sendNotification(title, message, tags);
   }
 }

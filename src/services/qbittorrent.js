@@ -1,8 +1,10 @@
 const axios = require("axios");
-const FormData = require("form-data");
 const fs = require("fs");
+const path = require("path");
+const FormData = require("form-data");
 const config = require("../config");
 const { log } = require("../utils/logger");
+const { parseMovieName } = require("../utils/helpers");
 
 class QBittorrentClient {
   constructor() {
@@ -22,12 +24,12 @@ class QBittorrentClient {
           maxRedirects: 0,
         }
       );
-      
+
       const cookies = response.headers["set-cookie"];
       const sid = cookies?.find(cookie => cookie.startsWith("SID="))?.split("=")[1]?.split(";")[0];
-      
+
       if (!sid) throw new Error("No SID received");
-      
+
       this.sid = sid;
       return sid;
     } catch (error) {
@@ -46,10 +48,22 @@ class QBittorrentClient {
   async addTorrent(torrentFile) {
     const sid = await this.ensureAuthenticated();
     const form = new FormData();
-    form.append("torrents", fs.createReadStream(torrentFile));
+
+    // Check if file exists before trying to read it
+    if (!fs.existsSync(torrentFile)) {
+      log.error(`Torrent file not found: ${torrentFile}`);
+      return false;
+    }
+
+    // Use readFileSync instead of createReadStream to avoid open file handles
+    // This ensures the file can be deleted immediately after upload
+    form.append("torrents", fs.readFileSync(torrentFile), {
+      filename: path.basename(torrentFile),
+      contentType: 'application/x-bittorrent'
+    });
     form.append("stopped", "true");
-    form.append("category", "radarr");
-    form.append("tags", "tamilmv");
+    form.append("category", config.QBITTORRENT.CATEGORY_ACTIVE);
+    form.append("tags", config.QBITTORRENT.TAG);
 
     try {
       await axios.post(`${config.TORRENT_URL}/add`, form, {
@@ -58,9 +72,34 @@ class QBittorrentClient {
           "User-Agent": "Fiddler",
           Cookie: `SID=${sid}`,
         },
+        timeout: 10000
       });
       return true;
     } catch (error) {
+      // If 403, session likely expired - try re-authenticating once
+      if (error.response?.status === 403) {
+        log.warning('QBittorrent session expired, re-authenticating...');
+        this.sid = null;
+
+        try {
+          const newSid = await this.login();
+          // Note: form data can be reused since we used readFileSync
+          await axios.post(`${config.TORRENT_URL}/add`, form, {
+            headers: {
+              ...form.getHeaders(),
+              "User-Agent": "Fiddler",
+              Cookie: `SID=${newSid}`,
+            },
+            timeout: 10000
+          });
+          log.success('Re-authentication successful, torrent added');
+          return true;
+        } catch (retryError) {
+          log.error("Failed to add torrent after re-authentication", retryError);
+          return false;
+        }
+      }
+
       log.error("Failed to add torrent", error);
       return false;
     }
@@ -68,18 +107,18 @@ class QBittorrentClient {
 
   async getTorrents(applyFilter = false) {
     const sid = await this.ensureAuthenticated();
-    
+
     try {
       const { data } = await axios.get(`${config.TORRENT_URL}/info`, {
         headers: { Cookie: `SID=${sid}` },
       });
-      
+
       if (applyFilter) {
         return data.filter(torrent =>
           torrent.progress === 0 &&
           torrent.state === "stoppedDL" &&
-          torrent.tags === "tamilmv" &&
-          torrent.category === "radarr"
+          torrent.tags === config.QBITTORRENT.TAG &&
+          torrent.category === config.QBITTORRENT.CATEGORY_ACTIVE
         );
       }
       return data;
@@ -93,7 +132,7 @@ class QBittorrentClient {
     if (torrents.length === 0) return;
 
     const sid = await this.ensureAuthenticated();
-    
+
     for (const torrent of torrents) {
       const form = new FormData();
       form.append("hashes", torrent.hash);
@@ -110,14 +149,50 @@ class QBittorrentClient {
           },
         });
 
-        const movieName = torrent.name.split(/\(\d{4}\)/)[0].trim().split("- ")[1]?.toUpperCase() || torrent.name;
-        const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
-        if (action === "start") {
-        log.success(`${action.toUpperCase()}${reason ? ` ${reason}` : ''} ${movieName} (${sizeGB} GB)`);
-      }
-    } catch (error) {
+      } catch (error) {
         log.error(`Failed to ${action} torrent: ${torrent.name}`);
       }
+    }
+  }
+
+  async cleanupCompletedTorrents() {
+    try {
+      const torrents = await this.getTorrents();
+
+      // Find completed torrents (in 'completed' category, 100% progress)
+      const completedTorrents = torrents.filter(torrent =>
+        torrent.tags === config.QBITTORRENT.TAG &&
+        torrent.category === config.QBITTORRENT.CATEGORY_COMPLETED
+      );
+
+      // Find stalled torrents (stalled download state, not making progress)
+      const stalledTorrents = torrents.filter(torrent =>
+        torrent.tags === config.QBITTORRENT.TAG &&
+        torrent.category === config.QBITTORRENT.CATEGORY_ACTIVE &&
+        (torrent.state === "stalledDL" || torrent.state === "error" || torrent.state === "missingFiles")
+      );
+
+      // Cleanup completed torrents
+      if (completedTorrents.length > 0) {
+        for (const torrent of completedTorrents) {
+          const parsed = parseMovieName(torrent.name);
+          const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
+          log.info(`[CLEANUP] ${parsed.display} (${sizeGB} GB) - completed`);
+        }
+        await this.manageTorrents(completedTorrents, "delete", "completed");
+      }
+
+      // Cleanup stalled torrents
+      if (stalledTorrents.length > 0) {
+        for (const torrent of stalledTorrents) {
+          const parsed = parseMovieName(torrent.name);
+          const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
+          log.warning(`[CLEANUP] ${parsed.display} (${sizeGB} GB) - stalled/error`);
+        }
+        await this.manageTorrents(stalledTorrents, "delete", "stalled/error");
+      }
+    } catch (error) {
+      log.error("Failed to cleanup torrents", error);
     }
   }
 }

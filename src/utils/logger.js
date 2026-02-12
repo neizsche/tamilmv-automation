@@ -3,7 +3,7 @@ const DailyRotateFile = require('winston-daily-rotate-file');
 const path = require('path');
 const fs = require('fs');
 
-const logDirectory = path.join(__dirname, '..', '..', 'logs');
+const logDirectory = path.join(__dirname, '..', '..', 'temp', 'logs');
 
 // Ensure log directory exists
 if (!fs.existsSync(logDirectory)) {
@@ -57,7 +57,7 @@ const logger = winston.createLogger({
       datePattern: 'YYYY-MM-DD',
       zippedArchive: true,
       maxSize: '20m',
-      maxFiles: '14d',
+      maxFiles: '7d',
       format: fileFormat,
     }),
   ],

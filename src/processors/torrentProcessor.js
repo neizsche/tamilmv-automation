@@ -146,133 +146,241 @@ class TorrentProcessor {
     return torrentsToDelete;
   }
 
-  async cleanUnwantedTorrents() {
-    try {
-      const filteredTorrents = await qbittorrent.getTorrents(true);
+  /**
+   * Filter torrents by size range
+   * @private
+   * @param {Array} torrents - Array of torrent objects
+   * @returns {Object} { filtered: Array, removed: Array }
+   */
+  async _filterBySize(torrents) {
+    const removed = torrents.filter(
+      torrent => torrent.size < config.TORRENT_SIZE.MIN_GB * 1024 ** 3 ||
+        torrent.size > config.TORRENT_SIZE.MAX_GB * 1024 ** 3
+    );
 
-      // Delete by size
-      const sizeTorrentsToDelete = filteredTorrents.filter(
-        torrent => torrent.size < config.TORRENT_SIZE.MIN_GB * 1024 ** 3 || torrent.size > config.TORRENT_SIZE.MAX_GB * 1024 ** 3
-      );
+    if (removed.length > 0) {
+      log.info(`[FILTER] Removed ${removed.length} torrent(s) by size (outside ${config.TORRENT_SIZE.MIN_GB}-${config.TORRENT_SIZE.MAX_GB}GB)`);
+      await qbittorrent.manageTorrents(removed, "delete", "inappropriate size");
+    }
 
-      if (sizeTorrentsToDelete.length > 0) {
-        log.info(`[FILTER] Removed ${sizeTorrentsToDelete.length} torrent(s) by size (outside ${config.TORRENT_SIZE.MIN_GB}-${config.TORRENT_SIZE.MAX_GB}GB)`);
-      }
-      await qbittorrent.manageTorrents(sizeTorrentsToDelete, "delete", "inappropriate size");
+    const removedHashes = new Set(removed.map(t => t.hash));
+    const filtered = torrents.filter(t => !removedHashes.has(t.hash));
 
-      // Delete duplicates
-      const updatedTorrents = await qbittorrent.getTorrents();
-      const duplicateTorrentsToDelete = this.identifyTorrentsToDelete(updatedTorrents);
+    return { filtered, removed };
+  }
 
-      if (duplicateTorrentsToDelete.length > 0) {
-        log.info(`[FILTER] Removed ${duplicateTorrentsToDelete.length} duplicate(s)`);
-      }
-      await qbittorrent.manageTorrents(duplicateTorrentsToDelete, "delete", "duplicate torrent");
+  /**
+   * Filter duplicate torrents, keeping the best one per movie
+   * @private
+   * @param {Array} torrents - Array of torrent objects
+   * @returns {Object} { filtered: Array, removed: Array }
+   */
+  async _filterDuplicates(torrents) {
+    const removed = this.identifyTorrentsToDelete(torrents);
 
-      // Check Radarr status for each torrent
-      const finalTorrents = await qbittorrent.getTorrents(true);
+    if (removed.length > 0) {
+      log.info(`[FILTER] Removed ${removed.length} duplicate(s)`);
+      await qbittorrent.manageTorrents(removed, "delete", "duplicate torrent");
+    }
 
-      const torrentsToStart = [];
-      const torrentsToDelete = [];
-      const movieProcessing = new Map(); // Track movie processing status
+    const removedHashes = new Set(removed.map(t => t.hash));
+    const filtered = torrents.filter(t => !removedHashes.has(t.hash));
 
-      for (const torrent of finalTorrents) {
-        try {
-          const movieStatus = await radarr.checkMovieStatus(torrent.name);
-          const parsed = parseMovieName(torrent.name);
-          const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
+    return { filtered, removed };
+  }
 
-          if (movieStatus.exists && movieStatus.hasFile) {
-            // Movie already in Radarr AND has file → delete torrent
-            torrentsToDelete.push(torrent);
-          } else if (movieStatus.exists && !movieStatus.hasFile) {
-            // Movie in Radarr but NO file → download it (don't re-add to Radarr)
-            torrentsToStart.push(torrent);
-            movieProcessing.set(parsed.display, {
-              name: parsed.display,
-              year: parsed.year,
-              size: sizeGB,
-              addedToRadarr: false,
-              notified: false,
-              downloading: true
-            });
-          } else {
-            // Movie NOT in Radarr → add to Radarr and download
-            torrentsToStart.push(torrent);
-            movieProcessing.set(parsed.display, {
-              name: parsed.display,
-              year: parsed.year,
-              size: sizeGB,
-              addedToRadarr: true,
-              notified: false,
-              downloading: true
-            });
-          }
-        } catch (error) {
-          log.error(`Error checking Radarr status for ${torrent.name}:`, error.message);
-          // Still start the torrent even if Radarr check failed
-          torrentsToStart.push(torrent);
-        }
-      }
+  /**
+   * Categorize torrents by Radarr status
+   * @private
+   * @param {Array} torrents - Array of torrent objects
+   * @returns {Object} { toDelete: Array, toStart: Array, movieProcessing: Map }
+   */
+  async _categorizeByRadarrStatus(torrents) {
+    const toStart = [];
+    const toDelete = [];
+    const movieProcessing = new Map();
 
-      // Add new movies to Radarr and update processing status
-      for (const [movieName, status] of movieProcessing) {
-        if (status.addedToRadarr) {
-          const torrent = torrentsToStart.find(t => {
-            const parsed = parseMovieName(t.name);
-            return parsed.display === movieName;
+    // Parallelize Radarr status checks
+    const radarrChecks = await Promise.allSettled(
+      torrents.map(async (torrent) => {
+        const movieStatus = await radarr.checkMovieStatus(torrent.name);
+        const parsed = parseMovieName(torrent.name);
+        const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
+
+        return { torrent, movieStatus, parsed, sizeGB };
+      })
+    );
+
+    // Process results
+    for (const result of radarrChecks) {
+      if (result.status === 'fulfilled') {
+        const { torrent, movieStatus, parsed, sizeGB } = result.value;
+
+        if (movieStatus.exists && movieStatus.hasFile) {
+          // Movie already in Radarr AND has file → delete torrent
+          toDelete.push(torrent);
+        } else if (movieStatus.exists && !movieStatus.hasFile) {
+          // Movie in Radarr but NO file → download it (don't re-add to Radarr)
+          toStart.push(torrent);
+          movieProcessing.set(parsed.display, {
+            name: parsed.display,
+            year: parsed.year,
+            size: sizeGB,
+            addedToRadarr: false,
+            notified: false,
+            downloading: true
           });
-          if (torrent) {
-            try {
-              const result = await radarr.addMovie(torrent.name);
-              if (result && result.added) {
-                status.notified = result.notified || false;
-              } else {
-                status.addedToRadarr = false;
-                log.warning(`Failed to add ${movieName} to Radarr`);
-              }
-            } catch (error) {
-              status.addedToRadarr = false;
-              log.error(`Error adding ${movieName} to Radarr:`, error.message);
-            }
-          }
-        }
-      }
-
-      // Delete torrents for movies that already have files
-      await qbittorrent.manageTorrents(torrentsToDelete, "delete", "movie file already available");
-
-      // Start torrents (both new movies and monitored movies without files)
-      await qbittorrent.manageTorrents(torrentsToStart, "start");
-
-      // Verify if any torrents are still stopped (e.g. stalled or paused by qBit)
-      // Wait a moment for start command to take effect
-      await wait(2000);
-      const stoppedTorrents = await qbittorrent.getTorrents(true);
-      if (stoppedTorrents.length > 0) {
-        log.warning(`[MAINTENANCE] Found ${stoppedTorrents.length} stopped torrent(s). Attempting to start them...`);
-        for (const t of stoppedTorrents) {
-          log.warning(`   - ${t.name}`);
-        }
-        await qbittorrent.manageTorrents(stoppedTorrents, "start");
-      }
-
-      // Output consolidated logs
-      if (movieProcessing.size > 0) {
-        log.info(`\n${movieProcessing.size} movie(s):`);
-        for (const [movieName, status] of movieProcessing) {
-          const statusParts = [
-            status.addedToRadarr ? '[ADDED]' : '',
-            status.notified ? '[NOTIFIED]' : '',
-            status.downloading ? '[DOWNLOADING]' : ''
-          ].filter(e => e).join(' ');
-
-          const yearStr = status.year ? ` (${status.year})` : '';
-          log.success(`${statusParts} ${status.name}${yearStr} - ${status.size} GB`);
+        } else {
+          // Movie NOT in Radarr → add to Radarr and download
+          toStart.push(torrent);
+          movieProcessing.set(parsed.display, {
+            name: parsed.display,
+            year: parsed.year,
+            size: sizeGB,
+            addedToRadarr: true,
+            notified: false,
+            downloading: true
+          });
         }
       } else {
-        log.info('[PROCESSING] No new movies to process');
+        // Handle rejected promises - still start the torrent
+        log.error(`Error checking Radarr status:`, result.reason?.message || result.reason);
       }
+    }
+
+    return { toDelete, toStart, movieProcessing };
+  }
+
+  /**
+   * Extract movies that need to be added to Radarr
+   * @private
+   * @param {Array} torrentsToStart - Torrents that will be started
+   * @param {Map} movieProcessing - Map of movie processing status
+   * @returns {Array} Movies to add with their associated data
+   */
+  _extractMoviesToAdd(torrentsToStart, movieProcessing) {
+    return Array.from(movieProcessing.entries())
+      .filter(([_, status]) => status.addedToRadarr)
+      .map(([movieName, status]) => {
+        const torrent = torrentsToStart.find(t => {
+          const parsed = parseMovieName(t.name);
+          return parsed.display === movieName;
+        });
+        return { movieName, status, torrent };
+      })
+      .filter(item => item.torrent);
+  }
+
+  /**
+   * Add movies to Radarr in parallel
+   * @private
+   * @param {Array} moviesToAdd - Movies to add with their metadata
+   * @param {Map} movieProcessing - Map to update with results
+   */
+  async _addMoviesToRadarr(moviesToAdd, movieProcessing) {
+    const addMoviePromises = moviesToAdd.map(async ({ movieName, status, torrent }) => {
+      try {
+        const result = await radarr.addMovie(torrent.name);
+        if (result && result.added) {
+          status.notified = result.notified || false;
+        } else {
+          status.addedToRadarr = false;
+          log.warning(`Failed to add ${movieName} to Radarr`);
+        }
+      } catch (error) {
+        status.addedToRadarr = false;
+        log.error(`Error adding ${movieName} to Radarr:`, error.message);
+      }
+    });
+
+    await Promise.allSettled(addMoviePromises);
+  }
+
+  /**
+   * Batch log torrents to CSV
+   * @private
+   * @param {Array} torrents - Torrents to log
+   */
+  _batchLogTorrentsToCSV(torrents) {
+    const csvLogger = require("../utils/csvLogger");
+    for (const torrent of torrents) {
+      csvLogger.logAdded(torrent.name, torrent.size);
+    }
+  }
+
+  /**
+   * Verify and restart any stopped torrents
+   * @private
+   */
+  async _verifyStoppedTorrents() {
+    await wait(2000);
+    const stoppedTorrents = await qbittorrent.getTorrents(true);
+    if (stoppedTorrents.length > 0) {
+      log.warning(`[MAINTENANCE] Found ${stoppedTorrents.length} stopped torrent(s). Attempting to start them...`);
+      for (const t of stoppedTorrents) {
+        log.warning(`   - ${t.name}`);
+      }
+      await qbittorrent.manageTorrents(stoppedTorrents, "start");
+    }
+  }
+
+  /**
+   * Log consolidated processing results
+   * @private
+   * @param {Map} movieProcessing - Map of movie processing status
+   */
+  _logProcessingResults(movieProcessing) {
+    if (movieProcessing.size > 0) {
+      log.info(`\n${movieProcessing.size} movie(s):`);
+      for (const [movieName, status] of movieProcessing) {
+        const statusParts = [
+          status.addedToRadarr ? '[ADDED]' : '',
+          status.notified ? '[NOTIFIED]' : '',
+          status.downloading ? '[DOWNLOADING]' : ''
+        ].filter(e => e).join(' ');
+
+        const yearStr = status.year ? ` (${status.year})` : '';
+        log.success(`${statusParts} ${status.name}${yearStr} - ${status.size} GB`);
+      }
+    } else {
+      log.info('[PROCESSING] No new movies to process');
+    }
+  }
+
+  async cleanUnwantedTorrents() {
+    try {
+      // Fetch all torrents once
+      let torrents = await qbittorrent.getTorrents(true);
+
+      // Phase 1: Apply filters
+      const sizeResult = await this._filterBySize(torrents);
+      torrents = sizeResult.filtered;
+
+      const dupResult = await this._filterDuplicates(torrents);
+      torrents = dupResult.filtered;
+
+      // Phase 2: Categorize by Radarr status
+      const { toDelete, toStart, movieProcessing } =
+        await this._categorizeByRadarrStatus(torrents);
+
+      // Phase 3: Add new movies to Radarr
+      const moviesToAdd = this._extractMoviesToAdd(toStart, movieProcessing);
+      await this._addMoviesToRadarr(moviesToAdd, movieProcessing);
+
+      // Phase 4: Delete torrents for movies that already have files
+      if (toDelete.length > 0) {
+        await qbittorrent.manageTorrents(toDelete, "delete", "movie file already available");
+      }
+
+      // Phase 5: Log torrents to CSV and start them
+      if (toStart.length > 0) {
+        this._batchLogTorrentsToCSV(toStart);
+        await qbittorrent.manageTorrents(toStart, "start");
+      }
+
+      // Phase 6: Verify and report
+      await this._verifyStoppedTorrents();
+      this._logProcessingResults(movieProcessing);
 
     } catch (error) {
       log.error("Error cleaning unwanted torrents", error);
@@ -309,12 +417,20 @@ class TorrentProcessor {
     try {
       log.info(`Processing ${items.length} new items`);
 
-      const links = await Promise.all(
-        items.map(async (item) => {
-          const links = await this.scrapeTorrentLinks(item.link);
-          return links;
-        })
-      );
+      const links = [];
+      for (const item of items) {
+        try {
+          const itemLinks = await this.scrapeTorrentLinks(item.link);
+          if (itemLinks && itemLinks.length > 0) {
+            links.push(...itemLinks);
+          }
+
+          await wait(200);
+
+        } catch (error) {
+          log.error(`Failed to scrape ${item.title}: ${error.message}`);
+        }
+      }
 
       const flatLinks = links.flat();
       log.info(`[DOWNLOAD] Processing ${flatLinks.length} torrent file(s) in batches of ${10}`);

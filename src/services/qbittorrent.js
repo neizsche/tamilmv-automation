@@ -5,6 +5,7 @@ const FormData = require("form-data");
 const config = require("../config");
 const { log } = require("../utils/logger");
 const { parseMovieName } = require("../utils/helpers");
+const csvLogger = require("../utils/csvLogger");
 
 class QBittorrentClient {
   constructor() {
@@ -139,6 +140,8 @@ class QBittorrentClient {
 
       if (action === "delete") {
         form.append("deleteFiles", "true");
+        // Log removal to CSV before deleting
+        csvLogger.logRemoved(torrent.name, torrent.size);
       }
 
       try {

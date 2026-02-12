@@ -6,7 +6,7 @@ const config = require("../config");
 const torrentProcessor = require("../processors/torrentProcessor");
 const { log } = require("../utils/logger");
 const notifier = require("./notifier");
-const domainResolver = require("./domainResolver"); // Import DomainResolver
+const domainResolver = require("./domainResolver");
 const { ensureFolderExists } = require("../utils/helpers");
 
 class RSSMonitor {

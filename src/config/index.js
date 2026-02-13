@@ -1,6 +1,6 @@
 const path = require("path");
-const { log } = require("../utils/logger");
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+const { log } = require("../utils/logger");
 
 // Validate required environment variables on startup
 const REQUIRED_VARS = [
@@ -104,5 +104,6 @@ module.exports = {
     ENABLED: process.env.NTFY_ENABLED === 'true' || false,
     TOPIC: process.env.NTFY_TOPIC || "tamilmv-movies",
     SERVER: process.env.NTFY_SERVER || "https://ntfy.sh"
-  }
+  },
+  VERBOSE_LOGGING: process.env.VERBOSE_LOGGING === 'true' || false
 };

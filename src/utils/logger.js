@@ -3,6 +3,8 @@ const DailyRotateFile = require('winston-daily-rotate-file');
 const path = require('path');
 const fs = require('fs');
 
+const verboseLogging = process.env.VERBOSE_LOGGING === 'true';
+
 const logDirectory = path.join(__dirname, '..', '..', 'temp', 'logs');
 
 // Ensure log directory exists
@@ -47,7 +49,7 @@ const fileFormat = winston.format.combine(
 
 const logger = winston.createLogger({
   levels: customLevels.levels,
-  level: 'info',
+  level: verboseLogging ? 'debug' : 'info',
   transports: [
     new winston.transports.Console({
       format: consoleFormat,
@@ -59,6 +61,7 @@ const logger = winston.createLogger({
       maxSize: '20m',
       maxFiles: '7d',
       format: fileFormat,
+      level: 'debug' // Always log everything to file, filter in console if needed, or just follow global level
     }),
   ],
 });

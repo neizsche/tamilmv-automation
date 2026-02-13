@@ -1,6 +1,6 @@
 const axios = require("axios");
-const { log } = require("./utils/logger");
 const config = require("./config");
+const { log } = require("./utils/logger");
 const rssMonitor = require("./services/rssMonitor");
 const qbittorrent = require("./services/qbittorrent");
 
@@ -60,57 +60,52 @@ const domainResolver = require("./services/domainResolver"); // Import DomainRes
 
 // Validate setup on startup
 async function validateSetup() {
-    log.info('Validating setup...');
+    const config = ignoreFeed ? `Ignore feeds, fetch ${daysToFetch}d` : 'Use existing feeds';
+
+    log.info('');
+    log.info('┌─ STARTUP ────────────────────────────────────────────────');
+    log.info(`│  Config:  ${config}`);
+    log.info(`│  ───────────────────────────────────────────────────────`);
 
     // Resolve Domain
     try {
         const domain = await domainResolver.resolve();
-        log.success(`Using TamilMV domain: ${domain}`);
+        log.info(`│  Domain:  ${domain}`);
     } catch (error) {
-        log.error('Failed to resolve TamilMV domain', error);
+        log.error('│  Domain:  ✗ Failed to resolve');
+        throw error;
     }
 
     // Test QBittorrent connection
     try {
         await qbittorrent.login();
-        log.success('QBittorrent connection OK');
+        log.info('│  QBit:    ✓ Connected');
     } catch (error) {
-        log.error('Cannot connect to QBittorrent', error);
+        log.error('│  QBit:    ✗ Connection failed');
         log.error('Please check QBITTORRENT_URL, USERNAME, and PASSWORD in .env');
-        process.exit(1);
+        throw error;
     }
 
     // Test Radarr connection
     try {
-        await axios.get(`${config.RADARR_URL}/api/v3/system/status`, {
-            headers: { 'X-Api-Key': config.RADARR_API_KEY },
+        await axios.get(`${require('./config').RADARR_URL}/api/v3/system/status`, {
+            headers: { 'X-Api-Key': require('./config').RADARR_API_KEY },
             timeout: 10000
         });
-        log.success('Radarr connection OK');
+        log.info('│  Radarr:  ✓ Connected');
     } catch (error) {
-        log.error('Cannot connect to Radarr', error);
+        log.error('│  Radarr:  ✗ Connection failed');
         log.error('Please check RADARR_URL and RADARR_API_KEY in .env');
-        process.exit(1);
+        throw error;
     }
 
-    log.success('All systems ready!');
+    log.info('└──────────────────────────────────────────────────────────');
     log.info('');
 }
 
 // Start the application
 validateSetup()
     .then(() => {
-        // Log enabled feeds
-        const enabledFeeds = Object.keys(config.FEEDS);
-        if (enabledFeeds.length > 0) {
-            log.info(`Enabled Feeds (${enabledFeeds.length}):`);
-            enabledFeeds.forEach(key => {
-                log.info(`   - ${key}: ${config.FEEDS[key]}`);
-            });
-        } else {
-            log.warning('NO FEEDS ENABLED! Check your .env file.');
-        }
-
         rssMonitor.startMonitoring(ignoreFeed, daysToFetch);
     })
     .catch((error) => {

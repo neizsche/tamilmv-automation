@@ -60,7 +60,7 @@ class RadarrClient {
           tmdbId: movieData.tmdbId,
           year: movieData.year,
           rootFolderPath: config.RADARR_ROOT_FOLDER,
-          monitored: true,
+          monitored: false,
           addOptions: { searchForMovie: false }
         };
 
@@ -114,10 +114,12 @@ class RadarrClient {
         });
 
         if (!lookupResponse.data?.length) {
+          log.debug(`[RADARR_API] Lookup for '${movieName}' returned 0 results.`);
           return { exists: false, hasFile: false };
         }
 
         const movieData = lookupResponse.data[0];
+        log.debug(`[RADARR_API] Lookup for '${movieName}' found: ${movieData.title} (Year: ${movieData.year}, TMDB: ${movieData.tmdbId})`);
 
         const existingResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie`, {
           headers: { 'X-Api-Key': config.RADARR_API_KEY },
@@ -127,8 +129,11 @@ class RadarrClient {
         const existingMovie = existingResponse.data.find(m => m.tmdbId === movieData.tmdbId);
 
         if (!existingMovie) {
+          log.debug(`[RADARR_API] '${movieData.title}' not found in library (via GET /api/v3/movie).`);
           return { exists: false, hasFile: false };
         }
+
+        log.debug(`[RADARR_API] '${existingMovie.title}' found in library. HasFile: ${existingMovie.hasFile}, Monitored: ${existingMovie.monitored}`);
 
         return {
           exists: true,

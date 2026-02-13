@@ -18,9 +18,13 @@ class TorrentScraper {
             $("a").each((index, element) => {
                 const href = $(element).attr("href");
                 if (href && href.includes("applications/core/interface/file/attachment.php")) {
-                    torrentLinks.push(href.split('"')[0].trim());
+                    const link = href.split('"')[0].trim();
+                    log.debug(`[SCRAPER] Found torrent link: ${link}`);
+                    torrentLinks.push(link);
                 }
             });
+
+            log.debug(`[SCRAPER] Scraped ${torrentLinks.length} links from ${pageUrl}`);
 
             return torrentLinks;
         } catch (error) {

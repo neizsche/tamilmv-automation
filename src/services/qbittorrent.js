@@ -258,6 +258,23 @@ class QBittorrentClient {
     return stalledTorrents.length;
   }
 
+  // Modular cleanup: Delete ALL stopped torrents with the tag
+  async _deleteStoppedTorrents(allTorrents) {
+    const stoppedTorrents = allTorrents.filter(torrent =>
+      torrent.tags === config.QBITTORRENT.TAG &&
+      (torrent.state === "stoppedDL" || torrent.state === "stoppedUP")
+    );
+
+    await this._processTorrentBatch(
+      stoppedTorrents,
+      "delete",
+      "[CLEANUP] Stopped (Tag):",
+      "warning"
+    );
+
+    return stoppedTorrents.length;
+  }
+
   // Main cleanup orchestrator
   async cleanupCompletedTorrents() {
     try {
@@ -265,8 +282,9 @@ class QBittorrentClient {
 
       // Execute all cleanup operations in sequence
       await this._stopFullyDownloadedTorrents(allTorrents);
-      await this._deleteCompletedTorrents(allTorrents);
+      //await this._deleteCompletedTorrents(allTorrents);
       await this._deleteStalledTorrents(allTorrents);
+      //await this._deleteStoppedTorrents(allTorrents);
 
     } catch (error) {
       log.error("Failed to cleanup torrents", error);

@@ -25,8 +25,10 @@ class RadarrIntegration {
                 const { torrent, movieStatus, parsed, sizeGB } = result.value;
 
                 if (movieStatus.exists && movieStatus.hasFile) {
+                    log.debug(`[RADARR_DECISION] ${parsed.display}: Exists=TRUE, HasFile=TRUE -> DELETE`);
                     toDelete.push(torrent);
                 } else if (movieStatus.exists && !movieStatus.hasFile) {
+                    log.debug(`[RADARR_DECISION] ${parsed.display}: Exists=TRUE, HasFile=FALSE -> QUEUE (Download)`);
                     toStart.push(torrent);
                     movieProcessing.set(parsed.display, {
                         name: parsed.display,
@@ -37,6 +39,7 @@ class RadarrIntegration {
                         downloading: true
                     });
                 } else {
+                    log.debug(`[RADARR_DECISION] ${parsed.display}: Exists=FALSE -> QUEUE (Add & Download)`);
                     toStart.push(torrent);
                     movieProcessing.set(parsed.display, {
                         name: parsed.display,
@@ -76,6 +79,16 @@ class RadarrIntegration {
                 const result = await radarr.addMovie(torrent.name);
                 if (result && result.added) {
                     status.notified = result.notified || false;
+                } else if (result && result.exists) {
+                    const movieStatus = await radarr.checkMovieStatus(torrent.name);
+                    if (movieStatus.hasFile) {
+                        status.addedToRadarr = false;
+                        status.downloading = false;
+                        log.info(`Movie already has file in Radarr: ${movieName}`);
+                    } else {
+                        status.addedToRadarr = false;
+                        log.info(`Movie exists in Radarr without file: ${movieName} - will download`);
+                    }
                 } else {
                     status.addedToRadarr = false;
                     log.warning(`Failed to add ${movieName} to Radarr`);
@@ -89,23 +102,7 @@ class RadarrIntegration {
         await Promise.allSettled(addPromises);
     }
 
-    logResults(movieProcessing) {
-        if (movieProcessing.size > 0) {
-            log.info(`\n${movieProcessing.size} movie(s):`);
-            for (const [movieName, status] of movieProcessing) {
-                const statusParts = [
-                    status.addedToRadarr ? '[ADDED]' : '',
-                    status.notified ? '[NOTIFIED]' : '',
-                    status.downloading ? '[DOWNLOADING]' : ''
-                ].filter(e => e).join(' ');
 
-                const yearStr = status.year ? ` (${status.year})` : '';
-                log.success(`${statusParts} ${status.name}${yearStr} - ${status.size} GB`);
-            }
-        } else {
-            log.info('[PROCESSING] No new movies to process');
-        }
-    }
 }
 
 module.exports = new RadarrIntegration();

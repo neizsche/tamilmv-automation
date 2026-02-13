@@ -21,27 +21,23 @@ class RSSMonitor {
     if (ignoreFeed) {
       const date = new Date();
       date.setDate(date.getDate() - days);
-      log.info(`[${feedKey}] Ignoring ${feedFile} - initialized lastPubDate to ${days} day(s) ago: ${date}`);
       return date;
     }
 
     if (!fs.existsSync(feedFile)) {
       const date = new Date();
       date.setDate(date.getDate() - days);
-      log.info(`[${feedKey}] Initialized lastPubDate to ${days} day(s) ago: ${date}`);
       return date;
     } else {
       try {
         const feedContent = fs.readFileSync(feedFile, "utf-8");
         const feed = this.parser.parse(feedContent);
-        // Handle case where item might be undefined or empty
         const items = feed.rss && feed.rss.channel && feed.rss.channel.item
           ? (Array.isArray(feed.rss.channel.item) ? feed.rss.channel.item : [feed.rss.channel.item])
           : [];
 
         if (items.length > 0) {
           const date = new Date(items[0].pubDate);
-          log.info(`[${feedKey}] Initialized lastPubDate to the date of the last item: ${date}`);
           return date;
         } else {
           throw new Error("No items in feed file");
@@ -49,7 +45,7 @@ class RSSMonitor {
       } catch (error) {
         const date = new Date();
         date.setDate(date.getDate() - 30);
-        log.warn(`[${feedKey}] Error reading ${feedFile} or empty, defaulting to 30 days ago: ${date}`);
+        log.warn(`[${feedKey}] Error reading feed file, defaulting to 30 days ago`);
         return date;
       }
     }
@@ -67,7 +63,7 @@ class RSSMonitor {
       return;
     }
 
-    log.info(`[${feedKey}] Checking RSS feed: ${feedUrl}`);
+    log.info(`[${feedKey}] Fetching feed from ${feedUrl}...`);
 
     try {
       const response = await axios.get(feedUrl, {
@@ -101,12 +97,32 @@ class RSSMonitor {
       }
 
       if (newItems.length === 0) {
-        log.info(`[${feedKey}] No new items found.`);
+        log.info(`[${feedKey}] No new items`);
+        return { items: 0, torrents: 0, moviesAdded: 0, moviesStarted: 0 };
       } else {
-        log.info(`[${feedKey}] Found ${newItems.length} new items`);
-        await orchestrator.processNew(newItems);
+        const stats = await orchestrator.processNew(newItems, feedKey);
+
+        log.info('');
+        log.info(`┌─ [${feedKey}] Processing ─────────────────────────────────`);
+        log.info(`│  RSS Items:     ${newItems.length}`);
+        log.info(`│  Torrents:      ${stats.torrents} (${stats.torrentsAdded} added to qBit)`);
+        log.info(`│  Filtering:     ${stats.filterSummary}`);
+        log.info(`│  Added:         ${stats.moviesAdded}`);
+        log.info(`│  Downloading:   ${stats.moviesStarted}`);
+
+        if (stats.downloadingDetails && stats.downloadingDetails.length > 0) {
+          log.info(`│  Details:`);
+          for (const movie of stats.downloadingDetails) {
+            log.info(`│    - ${movie.name} (${movie.size} GB)`);
+          }
+        }
+
+        log.info('└────────────────────────────────────────────────────────────');
+        log.info('');
+
         this.lastPubDates[feedKey] = new Date(newItems[0].pubDate);
-        log.info(`[${feedKey}] Updated lastPubDate to: ${this.lastPubDates[feedKey]}`);
+
+        return stats;
       }
 
     } catch (error) {
@@ -116,18 +132,48 @@ class RSSMonitor {
   }
 
   async runChecks() {
-    // Always cleanup completed torrents on every cycle
+    const startTime = new Date();
     log.info('[MAINTENANCE] Running cleanup...');
     const qbittorrent = require('./qbittorrent');
     await qbittorrent.cleanupCompletedTorrents();
 
+    const sessionStats = {
+      totalItems: 0,
+      totalTorrents: 0,
+      totalMoviesAdded: 0,
+      totalDownloading: 0,
+      feedStats: {}
+    };
+
     for (const [key, path] of Object.entries(config.FEEDS)) {
-      await this.checkRSSFeed(key, path);
+      const feedStats = await this.checkRSSFeed(key, path);
+      if (feedStats) {
+        sessionStats.feedStats[key] = feedStats;
+        sessionStats.totalItems += feedStats.items;
+        sessionStats.totalTorrents += feedStats.torrents;
+        sessionStats.totalMoviesAdded += feedStats.moviesAdded;
+        sessionStats.totalDownloading += feedStats.moviesStarted;
+      }
     }
+
+
+
+    const now = new Date();
+    const duration = now - startTime;
+    const durationSeconds = (duration / 1000).toFixed(1);
+    const nextRun = new Date(now.getTime() + config.CHECK_INTERVAL);
+    const timeFormat = { hour: '2-digit', minute: '2-digit', hour12: true };
+
+    log.info('');
+    log.info('┌─ SESSION COMPLETE ───────────────────────────────────────');
+    log.info(`│  Completed: ${now.toLocaleTimeString('en-US', timeFormat)}`);
+    log.info(`│  Duration:  ${durationSeconds}s`);
+    log.info(`│  Next run:  ${nextRun.toLocaleTimeString('en-US', timeFormat)}`);
+    log.info('└──────────────────────────────────────────────────────────');
+    log.info('');
   }
 
   startMonitoring(ignoreFeed = false, days = 2) {
-    // Initialize lastPubDate for each feed
     if (!config.FEEDS || Object.keys(config.FEEDS).length === 0) {
       log.error("No FEEDS configured! Please check your config.");
       return;
@@ -138,18 +184,16 @@ class RSSMonitor {
     }
 
     const intervalMinutes = config.CHECK_INTERVAL / 60000;
-    log.info('RSS Monitoring started');
-    log.info(`Will check ${Object.keys(config.FEEDS).length} feeds every ${intervalMinutes} minutes`);
 
-    for (const [key, path] of Object.entries(config.FEEDS)) {
-      log.info(`Feed [${key}]: ${path}`);
-    }
+    log.info('');
+    log.info('┌─ RSS MONITORING ─────────────────────────────────────────');
+    log.info(`│  Status: Started (checking every ${intervalMinutes} min)`);
+    log.info(`│  Feeds:  ${Object.keys(config.FEEDS).length} enabled`);
+    log.info('└──────────────────────────────────────────────────────────');
     log.info('');
 
-    // Initial check
     this.runChecks();
 
-    // Periodic checks with heartbeat
     setInterval(() => {
       log.info('Heartbeat - checking RSS feeds...');
       this.runChecks();

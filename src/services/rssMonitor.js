@@ -3,7 +3,7 @@ const { XMLParser } = require("fast-xml-parser");
 const fs = require("fs");
 const path = require("path");
 const config = require("../config");
-const torrentProcessor = require("../processors/torrentProcessor");
+const orchestrator = require("../processors/orchestrator");
 const { log } = require("../utils/logger");
 const notifier = require("./notifier");
 const domainResolver = require("./domainResolver");
@@ -104,7 +104,7 @@ class RSSMonitor {
         log.info(`[${feedKey}] No new items found.`);
       } else {
         log.info(`[${feedKey}] Found ${newItems.length} new items`);
-        await torrentProcessor.processNewItems(newItems);
+        await orchestrator.processNew(newItems);
         this.lastPubDates[feedKey] = new Date(newItems[0].pubDate);
         log.info(`[${feedKey}] Updated lastPubDate to: ${this.lastPubDates[feedKey]}`);
       }

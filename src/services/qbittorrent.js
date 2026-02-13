@@ -150,50 +150,124 @@ class QBittorrentClient {
             ...form.getHeaders(),
             Cookie: `SID=${sid}`,
           },
+          timeout: 10000
         });
 
       } catch (error) {
-        log.error(`Failed to ${action} torrent: ${torrent.name}`);
+        // If 403, try re-authenticating once
+        if (error.response?.status === 403) {
+          log.warning(`Session expired for ${action} operation, re-authenticating...`);
+          this.sid = null;
+          try {
+            const newSid = await this.login();
+            await axios.post(`${config.TORRENT_URL}/${action}`, form, {
+              headers: {
+                ...form.getHeaders(),
+                Cookie: `SID=${newSid}`,
+              },
+              timeout: 10000
+            });
+            log.success(`Re-authenticated and ${action} successful for: ${torrent.name}`);
+          } catch (retryError) {
+            log.error(`Failed to ${action} torrent after re-auth: ${torrent.name}`, retryError);
+          }
+        } else {
+          // Log more details about the error
+          const errorDetails = error.response?.data || error.message;
+          log.error(`Failed to ${action} torrent: ${torrent.name}`, errorDetails);
+        }
       }
     }
   }
 
+  // Helper: Log torrent information
+  _logTorrentInfo(torrent, prefix, logLevel = "info") {
+    const parsed = parseMovieName(torrent.name);
+    const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
+    const message = `${prefix} ${parsed.display} (${sizeGB} GB)`;
+
+    if (logLevel === "warning") {
+      log.warning(message);
+    } else {
+      log.info(message);
+    }
+  }
+
+  // Helper: Process and manage a batch of torrents
+  async _processTorrentBatch(torrents, action, logPrefix, logLevel = "info") {
+    if (torrents.length === 0) return;
+
+    for (const torrent of torrents) {
+      this._logTorrentInfo(torrent, logPrefix, logLevel);
+    }
+
+    await this.manageTorrents(torrents, action);
+  }
+
+  // Modular cleanup: Stop torrents that are 100% downloaded but still uploading
+  async _stopFullyDownloadedTorrents(allTorrents) {
+    const fullyDownloadedTorrents = allTorrents.filter(torrent =>
+      torrent.tags === config.QBITTORRENT.TAG &&
+      torrent.progress === 1 && // 100% complete
+      torrent.state !== "stoppedDL" &&
+      torrent.state !== "stoppedUP"
+    );
+
+    await this._processTorrentBatch(
+      fullyDownloadedTorrents,
+      "stop",
+      "[STOP] Stopping upload (100% complete):"
+    );
+
+    return fullyDownloadedTorrents.length;
+  }
+
+  // Modular cleanup: Delete torrents in the 'completed' category
+  async _deleteCompletedTorrents(allTorrents) {
+    const completedTorrents = allTorrents.filter(torrent =>
+      torrent.tags === config.QBITTORRENT.TAG &&
+      torrent.category === config.QBITTORRENT.CATEGORY_COMPLETED
+    );
+
+    await this._processTorrentBatch(
+      completedTorrents,
+      "delete",
+      "[CLEANUP] Completed:"
+    );
+
+    return completedTorrents.length;
+  }
+
+  // Modular cleanup: Delete stalled, errored, or missing file torrents
+  async _deleteStalledTorrents(allTorrents) {
+    const stalledTorrents = allTorrents.filter(torrent =>
+      torrent.tags === config.QBITTORRENT.TAG &&
+      torrent.category === config.QBITTORRENT.CATEGORY_ACTIVE &&
+      (torrent.state === "stalledDL" ||
+        torrent.state === "error" ||
+        torrent.state === "missingFiles")
+    );
+
+    await this._processTorrentBatch(
+      stalledTorrents,
+      "delete",
+      "[CLEANUP] Stalled/Error:",
+      "warning"
+    );
+
+    return stalledTorrents.length;
+  }
+
+  // Main cleanup orchestrator
   async cleanupCompletedTorrents() {
     try {
-      const torrents = await this.getTorrents();
+      const allTorrents = await this.getTorrents();
 
-      // Find completed torrents (in 'completed' category, 100% progress)
-      const completedTorrents = torrents.filter(torrent =>
-        torrent.tags === config.QBITTORRENT.TAG &&
-        torrent.category === config.QBITTORRENT.CATEGORY_COMPLETED
-      );
+      // Execute all cleanup operations in sequence
+      await this._stopFullyDownloadedTorrents(allTorrents);
+      await this._deleteCompletedTorrents(allTorrents);
+      await this._deleteStalledTorrents(allTorrents);
 
-      // Find stalled torrents (stalled download state, not making progress)
-      const stalledTorrents = torrents.filter(torrent =>
-        torrent.tags === config.QBITTORRENT.TAG &&
-        torrent.category === config.QBITTORRENT.CATEGORY_ACTIVE &&
-        (torrent.state === "stalledDL" || torrent.state === "error" || torrent.state === "missingFiles")
-      );
-
-      // Cleanup completed torrents
-      if (completedTorrents.length > 0) {
-        for (const torrent of completedTorrents) {
-          const parsed = parseMovieName(torrent.name);
-          const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
-          log.info(`[CLEANUP] ${parsed.display} (${sizeGB} GB) - completed`);
-        }
-        await this.manageTorrents(completedTorrents, "delete", "completed");
-      }
-
-      // Cleanup stalled torrents
-      if (stalledTorrents.length > 0) {
-        for (const torrent of stalledTorrents) {
-          const parsed = parseMovieName(torrent.name);
-          const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
-          log.warning(`[CLEANUP] ${parsed.display} (${sizeGB} GB) - stalled/error`);
-        }
-        await this.manageTorrents(stalledTorrents, "delete", "stalled/error");
-      }
     } catch (error) {
       log.error("Failed to cleanup torrents", error);
     }

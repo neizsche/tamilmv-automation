@@ -1,14 +1,14 @@
-const path = require("path");
-const config = require("../config");
-const qbittorrent = require("../services/qbittorrent");
-const csvLogger = require("../utils/csvLogger");
-const { wait } = require("../utils/helpers");
-const { log } = require("../utils/logger");
+const path = require('path');
+const config = require('../config');
+const qbittorrent = require('../services/qbittorrent');
+const csvLogger = require('../utils/csvLogger');
+const { wait } = require('../utils/helpers');
+const { log } = require('../utils/logger');
 
-const downloader = require("./downloader");
-const scraper = require("./scraper");
-const filter = require("./filter");
-const radarr = require("./radarr");
+const downloader = require('./downloader');
+const scraper = require('./scraper');
+const filter = require('./filter');
+const radarr = require('./radarr');
 
 class TorrentOrchestrator {
     async processSingle(torrentLink) {
@@ -45,14 +45,16 @@ class TorrentOrchestrator {
         await wait(2000);
         const allStoppedTorrents = await qbittorrent.getTorrents(true);
 
-        const stoppedTorrents = allStoppedTorrents.filter(t => torrentHashes.includes(t.hash));
+        const stoppedTorrents = allStoppedTorrents.filter((t) => torrentHashes.includes(t.hash));
 
         if (stoppedTorrents.length > 0) {
-            log.warning(`[MAINTENANCE] Found ${stoppedTorrents.length} stopped torrent(s) that should be running. Attempting to start them...`);
+            log.warning(
+                `[MAINTENANCE] Found ${stoppedTorrents.length} stopped torrent(s) that should be running. Attempting to start them...`
+            );
             for (const t of stoppedTorrents) {
                 log.warning(`   - ${t.name}`);
             }
-            await qbittorrent.manageTorrents(stoppedTorrents, "start");
+            await qbittorrent.manageTorrents(stoppedTorrents, 'start');
         }
     }
 
@@ -61,15 +63,17 @@ class TorrentOrchestrator {
             const allStoppedTorrents = await qbittorrent.getTorrents(true);
             if (allStoppedTorrents.length === 0) return;
 
-            const leftovers = allStoppedTorrents.filter(t => !activeHashes.includes(t.hash));
+            const leftovers = allStoppedTorrents.filter((t) => !activeHashes.includes(t.hash));
 
             if (leftovers.length > 0) {
-                log.warning(`[CLEANUP] Found ${leftovers.length} leftover stopped torrent(s). Removing...`);
-                leftovers.forEach(t => log.debug(`[CLEANUP] Removing leftover: ${t.name}`));
-                await qbittorrent.manageTorrents(leftovers, "delete", "leftover stopped torrent");
+                log.warning(
+                    `[CLEANUP] Found ${leftovers.length} leftover stopped torrent(s). Removing...`
+                );
+                leftovers.forEach((t) => log.debug(`[CLEANUP] Removing leftover: ${t.name}`));
+                await qbittorrent.manageTorrents(leftovers, 'delete', 'leftover stopped torrent');
             }
         } catch (error) {
-            log.error("Error cleaning leftover stopped torrents", error);
+            log.error('Error cleaning leftover stopped torrents', error);
         }
     }
 
@@ -81,18 +85,24 @@ class TorrentOrchestrator {
             const torrentsToDelete = [];
 
             for (const torrent of allStoppedTorrents) {
-                const movieStatus = await require("./radarr")._checkStatus(torrent);
+                const movieStatus = await require('./radarr')._checkStatus(torrent);
                 if (movieStatus.movieStatus.exists && movieStatus.movieStatus.hasFile) {
                     torrentsToDelete.push(torrent);
                 }
             }
 
             if (torrentsToDelete.length > 0) {
-                log.info(`[CLEANUP] Removing ${torrentsToDelete.length} orphaned stopped torrent(s) (movies have files in Radarr)`);
-                await qbittorrent.manageTorrents(torrentsToDelete, "delete", "orphaned - movie file already available");
+                log.info(
+                    `[CLEANUP] Removing ${torrentsToDelete.length} orphaned stopped torrent(s) (movies have files in Radarr)`
+                );
+                await qbittorrent.manageTorrents(
+                    torrentsToDelete,
+                    'delete',
+                    'orphaned - movie file already available'
+                );
             }
         } catch (error) {
-            log.error("Error cleaning orphaned stopped torrents", error);
+            log.error('Error cleaning orphaned stopped torrents', error);
         }
     }
 
@@ -100,7 +110,7 @@ class TorrentOrchestrator {
         const stats = {
             moviesAdded: 0,
             moviesStarted: 0,
-            filterSummary: ''
+            filterSummary: '',
         };
 
         try {
@@ -118,25 +128,35 @@ class TorrentOrchestrator {
             const torrentsToStart = [];
 
             for (const torrent of toStart) {
-                const parsed = require("../utils/helpers").parseMovieName(torrent.name);
+                const parsed = require('../utils/helpers').parseMovieName(torrent.name);
                 const movieStatus = movieProcessing.get(parsed.display);
 
-                if (movieStatus && movieStatus.addedToRadarr === false && movieStatus.downloading === false) {
+                if (
+                    movieStatus &&
+                    movieStatus.addedToRadarr === false &&
+                    movieStatus.downloading === false
+                ) {
                     torrentsToDelete.push(torrent);
                     movieProcessing.delete(parsed.display);
-                    log.info(`[FILTER] Moving to delete: ${parsed.display} (movie already in Radarr with file)`);
+                    log.info(
+                        `[FILTER] Moving to delete: ${parsed.display} (movie already in Radarr with file)`
+                    );
                 } else {
                     torrentsToStart.push(torrent);
                 }
             }
 
             if (torrentsToDelete.length > 0) {
-                await qbittorrent.manageTorrents(torrentsToDelete, "delete", "movie file already available");
+                await qbittorrent.manageTorrents(
+                    torrentsToDelete,
+                    'delete',
+                    'movie file already available'
+                );
             }
 
             if (torrentsToStart.length > 0) {
                 this._logToCSV(torrentsToStart);
-                await qbittorrent.manageTorrents(torrentsToStart, "start");
+                await qbittorrent.manageTorrents(torrentsToStart, 'start');
                 stats.moviesStarted = torrentsToStart.length;
             }
 
@@ -151,22 +171,21 @@ class TorrentOrchestrator {
 
             stats.moviesAdded = movieProcessing.size;
 
-            const hashesToVerify = torrentsToStart.map(t => t.hash);
+            const hashesToVerify = torrentsToStart.map((t) => t.hash);
             await this._verifyStoppedTorrents(hashesToVerify);
 
             // Stricter cleanup: Remove ANY stopped torrent with our tag that we didn't just start
             //await this._cleanupLeftoverStoppedTorrents(hashesToVerify);
 
-            // Legacy cleanup (might be redundant now but checking Radarr status is safer? 
+            // Legacy cleanup (might be redundant now but checking Radarr status is safer?
             // The new _cleanupLeftoverStoppedTorrents is more aggressive and better for "stopped" torrents that filter.js missed)
             // valid torrents are started, so they won't be stopped.
             // invalid torrents (too small/large/dup) are deleted by filter.js.
             // so any remaining stopped torrents are leftovers.
 
             await this._cleanupOrphanedStoppedTorrents();
-
         } catch (error) {
-            log.error("Error cleaning unwanted torrents", error);
+            log.error('Error cleaning unwanted torrents', error);
         }
 
         return stats;
@@ -179,7 +198,7 @@ class TorrentOrchestrator {
             moviesAdded: 0,
             moviesStarted: 0,
             filterSummary: '',
-            torrentsAdded: 0
+            torrentsAdded: 0,
         };
 
         try {
@@ -190,7 +209,7 @@ class TorrentOrchestrator {
             const BATCH_SIZE = 10;
             for (let i = 0; i < flatLinks.length; i += BATCH_SIZE) {
                 const batch = flatLinks.slice(i, i + BATCH_SIZE);
-                await Promise.allSettled(batch.map(link => this.processSingle(link)));
+                await Promise.allSettled(batch.map((link) => this.processSingle(link)));
             }
 
             const addedTorrents = await qbittorrent.getTorrents(true);
@@ -211,7 +230,7 @@ class TorrentOrchestrator {
 
             // Format filter summary
             const s = cleanupStats.filterSummary; // This is now an object
-            // stats.filterSummary needs to be a string for the table log below? 
+            // stats.filterSummary needs to be a string for the table log below?
             // The table log is inside checkRSSFeed in rssMonitor.js, NOT here.
             // Wait, orchestrator.processNew returns stats to rssMonitor.js.
             // rssMonitor.js logs the table.
@@ -228,7 +247,7 @@ class TorrentOrchestrator {
 
             downloader.cleanupOrphaned();
         } catch (error) {
-            log.error("Error processing new items", error);
+            log.error('Error processing new items', error);
         }
 
         return stats;

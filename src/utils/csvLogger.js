@@ -1,10 +1,10 @@
-const fs = require("fs");
-const path = require("path");
-const { parseMovieName } = require("./helpers");
+const fs = require('fs');
+const path = require('path');
+const { parseMovieName } = require('./helpers');
 
 class CSVLogger {
     constructor() {
-        this.csvPath = path.join(__dirname, "..", "..", "temp", "torrent_events.csv");
+        this.csvPath = path.join(__dirname, '..', '..', 'temp', 'torrent_events.csv');
         this.ensureCSVExists();
     }
 
@@ -17,24 +17,20 @@ class CSVLogger {
 
         // Create CSV with headers if it doesn't exist
         if (!fs.existsSync(this.csvPath)) {
-            const headers = "Movie Name,Size (GB),Added Time,Removed Time,Duration (hours)\n";
-            fs.writeFileSync(this.csvPath, headers, "utf8");
+            const headers = 'Movie Name,Size (GB),Added Time,Removed Time,Duration (hours)\n';
+            fs.writeFileSync(this.csvPath, headers, 'utf8');
         }
     }
 
     formatTimestamp() {
         const now = new Date();
         // Format: YYYY-MM-DD HH:MM:SS
-        return now.toISOString().replace("T", " ").substring(0, 19);
+        return now.toISOString().replace('T', ' ').substring(0, 19);
     }
 
     escapeCSVField(field) {
         // Escape fields that contain commas, quotes, or newlines
-        if (
-            field.includes(",") ||
-            field.includes('"') ||
-            field.includes("\n")
-        ) {
+        if (field.includes(',') || field.includes('"') || field.includes('\n')) {
             return `"${field.replace(/"/g, '""')}"`;
         }
         return field;
@@ -47,27 +43,27 @@ class CSVLogger {
             const durationMs = removed - added;
             const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
             return durationHours;
-        } catch (error) {
-            return "N/A";
+        } catch (_) {
+            return 'N/A';
         }
     }
 
     readCSV() {
         try {
-            const content = fs.readFileSync(this.csvPath, "utf8");
-            const lines = content.trim().split("\n");
+            const content = fs.readFileSync(this.csvPath, 'utf8');
+            const lines = content.trim().split('\n');
             return lines;
         } catch (error) {
-            console.error("Failed to read CSV:", error);
+            console.error('Failed to read CSV:', error);
             return [];
         }
     }
 
     writeCSV(lines) {
         try {
-            fs.writeFileSync(this.csvPath, lines.join("\n") + "\n", "utf8");
+            fs.writeFileSync(this.csvPath, lines.join('\n') + '\n', 'utf8');
         } catch (error) {
-            console.error("Failed to write CSV:", error);
+            console.error('Failed to write CSV:', error);
         }
     }
 
@@ -82,17 +78,17 @@ class CSVLogger {
                 this.escapeCSVField(parsed.display),
                 sizeGB,
                 timestamp,
-                "", // Removed time - empty for now
-                "", // Duration - empty for now
-            ].join(",");
+                '', // Removed time - empty for now
+                '', // Duration - empty for now
+            ].join(',');
 
-            fs.appendFileSync(this.csvPath, row + "\n", "utf8");
+            fs.appendFileSync(this.csvPath, row + '\n', 'utf8');
         } catch (error) {
-            console.error("Failed to log added event:", error);
+            console.error('Failed to log added event:', error);
         }
     }
 
-    logRemoved(movieName, sizeBytes) {
+    logRemoved(movieName) {
         try {
             const removedTime = this.formatTimestamp();
             const parsed = parseMovieName(movieName);
@@ -104,7 +100,7 @@ class CSVLogger {
             const updatedLines = lines.map((line, index) => {
                 if (index === 0) return line; // Keep header
 
-                const parts = line.split(",");
+                const parts = line.split(',');
                 if (parts.length < 3) return line;
 
                 // Check if this is the movie we're looking for (by name)
@@ -118,7 +114,7 @@ class CSVLogger {
                     parts[3] = removedTime;
                     parts[4] = duration;
                     updated = true;
-                    return parts.join(",");
+                    return parts.join(',');
                 }
                 return line;
             });
@@ -127,7 +123,7 @@ class CSVLogger {
                 this.writeCSV(updatedLines);
             }
         } catch (error) {
-            console.error("Failed to log removed event:", error);
+            console.error('Failed to log removed event:', error);
         }
     }
 }

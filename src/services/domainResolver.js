@@ -1,11 +1,11 @@
-const axios = require("axios");
-const fs = require("fs");
-const path = require("path");
-const config = require("../config");
-const { log } = require("../utils/logger");
-const { ensureFolderExists } = require("../utils/helpers");
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const config = require('../config');
+const { log } = require('../utils/logger');
+const { ensureFolderExists } = require('../utils/helpers');
 
-const CACHE_FILE = path.resolve(__dirname, "../../temp/domain_cache.json");
+const CACHE_FILE = path.resolve(__dirname, '../../temp/domain_cache.json');
 
 class DomainResolver {
     constructor() {
@@ -15,14 +15,13 @@ class DomainResolver {
     }
 
     async resolve() {
-        if (this.checkedDate && (Date.now() - this.checkedDate < 3600000)) {
+        if (this.checkedDate && Date.now() - this.checkedDate < 3600000) {
             return this.currentDomain;
         }
 
         const diskCache = this.loadCache();
-        const learnedDomains = diskCache && Array.isArray(diskCache.workingDomains)
-            ? diskCache.workingDomains
-            : [];
+        const learnedDomains =
+            diskCache && Array.isArray(diskCache.workingDomains) ? diskCache.workingDomains : [];
 
         if (diskCache && diskCache.domain && !learnedDomains.includes(diskCache.domain)) {
             learnedDomains.unshift(diskCache.domain);
@@ -66,7 +65,9 @@ class DomainResolver {
 
             // Load existing to preserve history
             const currentCache = this.loadCache() || {};
-            let history = Array.isArray(currentCache.workingDomains) ? currentCache.workingDomains : [];
+            let history = Array.isArray(currentCache.workingDomains)
+                ? currentCache.workingDomains
+                : [];
 
             // Migration: if old format exists, include it
             if (currentCache.domain && !history.includes(currentCache.domain)) {
@@ -74,7 +75,7 @@ class DomainResolver {
             }
 
             // Remove the domain if it's already there (to move it to front)
-            history = history.filter(d => d !== workingDomain);
+            history = history.filter((d) => d !== workingDomain);
 
             // Add to front
             history.unshift(workingDomain);
@@ -84,10 +85,17 @@ class DomainResolver {
                 history = history.slice(0, 5);
             }
 
-            fs.writeFileSync(CACHE_FILE, JSON.stringify({
-                workingDomains: history,
-                updated: new Date().toISOString()
-            }, null, 2));
+            fs.writeFileSync(
+                CACHE_FILE,
+                JSON.stringify(
+                    {
+                        workingDomains: history,
+                        updated: new Date().toISOString(),
+                    },
+                    null,
+                    2
+                )
+            );
 
             log.debug(`💾 Updated domain history: ${JSON.stringify(history)}`);
         } catch (error) {
@@ -101,7 +109,7 @@ class DomainResolver {
 
     getUrl(path) {
         // Ensure path starts with / if not empty
-        const cleanPath = path.startsWith("/") ? path : `/${path}`;
+        const cleanPath = path.startsWith('/') ? path : `/${path}`;
         return `${this.currentDomain}${cleanPath}`;
     }
 }

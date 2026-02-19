@@ -1,7 +1,7 @@
-const config = require("../config");
-const qbittorrent = require("../services/qbittorrent");
-const { parseMovieName } = require("../utils/helpers");
-const { log } = require("../utils/logger");
+const config = require('../config');
+const qbittorrent = require('../services/qbittorrent');
+const { parseMovieName } = require('../utils/helpers');
+const { log } = require('../utils/logger');
 
 class TorrentFilter {
     async bySize(torrents) {
@@ -15,10 +15,14 @@ class TorrentFilter {
         for (const torrent of torrents) {
             const sizeGB = (torrent.size / 1024 ** 3).toFixed(2);
             if (torrent.size < minBytes) {
-                log.debug(`[FILTER] Size: ${torrent.name} (${sizeGB} GB) < Min (${config.TORRENT_SIZE.MIN_GB} GB) -> DROP (Too Small)`);
+                log.debug(
+                    `[FILTER] Size: ${torrent.name} (${sizeGB} GB) < Min (${config.TORRENT_SIZE.MIN_GB} GB) -> DROP (Too Small)`
+                );
                 removedTooSmall.push(torrent);
             } else if (torrent.size > maxBytes) {
-                log.debug(`[FILTER] Size: ${torrent.name} (${sizeGB} GB) > Max (${config.TORRENT_SIZE.MAX_GB} GB) -> DROP (Too Large)`);
+                log.debug(
+                    `[FILTER] Size: ${torrent.name} (${sizeGB} GB) > Max (${config.TORRENT_SIZE.MAX_GB} GB) -> DROP (Too Large)`
+                );
                 removedTooLarge.push(torrent);
             } else {
                 log.debug(`[FILTER] Size: ${torrent.name} (${sizeGB} GB) -> KEEP`);
@@ -29,17 +33,25 @@ class TorrentFilter {
         const allRemoved = [...removedTooSmall, ...removedTooLarge];
 
         if (allRemoved.length > 0) {
-            removedTooSmall.forEach(t => log.debug(`[FILTER] Removed by size (Too Small): ${t.name} (${(t.size / 1024 ** 3).toFixed(2)} GB)`));
-            removedTooLarge.forEach(t => log.debug(`[FILTER] Removed by size (Too Large): ${t.name} (${(t.size / 1024 ** 3).toFixed(2)} GB)`));
+            removedTooSmall.forEach((t) =>
+                log.debug(
+                    `[FILTER] Removed by size (Too Small): ${t.name} (${(t.size / 1024 ** 3).toFixed(2)} GB)`
+                )
+            );
+            removedTooLarge.forEach((t) =>
+                log.debug(
+                    `[FILTER] Removed by size (Too Large): ${t.name} (${(t.size / 1024 ** 3).toFixed(2)} GB)`
+                )
+            );
 
-            await qbittorrent.manageTorrents(allRemoved, "delete", "inappropriate size");
+            await qbittorrent.manageTorrents(allRemoved, 'delete', 'inappropriate size');
         }
 
         return {
             filtered: valid,
             removed: allRemoved,
             countSmall: removedTooSmall.length,
-            countLarge: removedTooLarge.length
+            countLarge: removedTooLarge.length,
         };
     }
 
@@ -47,9 +59,10 @@ class TorrentFilter {
         const groupedTorrents = {};
         const torrentsToDelete = [];
 
-        const filteredTorrents = torrents.filter(torrent =>
-            torrent.tags === config.QBITTORRENT.TAG &&
-            torrent.category === config.QBITTORRENT.CATEGORY_ACTIVE
+        const filteredTorrents = torrents.filter(
+            (torrent) =>
+                torrent.tags === config.QBITTORRENT.TAG &&
+                torrent.category === config.QBITTORRENT.CATEGORY_ACTIVE
         );
 
         filteredTorrents.forEach((torrent) => {
@@ -75,12 +88,18 @@ class TorrentFilter {
                 }
             });
 
-            log.debug(`[FILTER] Duplicate Group: ${movieTorrents[0].name.split(/\(\d{4}\)/)[0].trim()} (Count: ${movieTorrents.length})`);
-            log.debug(`[FILTER]   - Keeping: ${bestTorrent.name} (${(bestTorrent.size / 1024 ** 3).toFixed(2)} GB)`);
+            log.debug(
+                `[FILTER] Duplicate Group: ${movieTorrents[0].name.split(/\(\d{4}\)/)[0].trim()} (Count: ${movieTorrents.length})`
+            );
+            log.debug(
+                `[FILTER]   - Keeping: ${bestTorrent.name} (${(bestTorrent.size / 1024 ** 3).toFixed(2)} GB)`
+            );
 
             movieTorrents.forEach((torrent) => {
                 if (torrent.hash !== bestTorrent.hash) {
-                    log.debug(`[FILTER]   - Removing: ${torrent.name} (${(torrent.size / 1024 ** 3).toFixed(2)} GB)`);
+                    log.debug(
+                        `[FILTER]   - Removing: ${torrent.name} (${(torrent.size / 1024 ** 3).toFixed(2)} GB)`
+                    );
                     torrentsToDelete.push(torrent);
                 }
             });
@@ -94,10 +113,10 @@ class TorrentFilter {
 
         const removed = this._findDuplicates(torrents);
 
-        const currentBatchHashes = new Set(torrents.map(t => t.hash));
+        const currentBatchHashes = new Set(torrents.map((t) => t.hash));
         const existingMovies = new Set();
 
-        allTorrents.forEach(torrent => {
+        allTorrents.forEach((torrent) => {
             // Skip if this torrent is part of the current batch we are processing
             if (currentBatchHashes.has(torrent.hash)) return;
 
@@ -107,12 +126,12 @@ class TorrentFilter {
             }
         });
 
-        const crossFeedDuplicates = torrents.filter(torrent => {
+        const crossFeedDuplicates = torrents.filter((torrent) => {
             const parsed = parseMovieName(torrent.name);
             const isDuplicate = existingMovies.has(parsed.display);
 
             if (isDuplicate) {
-                const removedHashes = new Set(removed.map(t => t.hash));
+                const removedHashes = new Set(removed.map((t) => t.hash));
                 if (!removedHashes.has(torrent.hash)) {
                     removed.push(torrent);
                 }
@@ -122,11 +141,11 @@ class TorrentFilter {
         });
 
         if (removed.length > 0) {
-            await qbittorrent.manageTorrents(removed, "delete", "duplicate torrent");
+            await qbittorrent.manageTorrents(removed, 'delete', 'duplicate torrent');
         }
 
-        const removedHashes = new Set(removed.map(t => t.hash));
-        const filtered = torrents.filter(t => !removedHashes.has(t.hash));
+        const removedHashes = new Set(removed.map((t) => t.hash));
+        const filtered = torrents.filter((t) => !removedHashes.has(t.hash));
 
         return { filtered, removed };
     }
@@ -149,8 +168,8 @@ class TorrentFilter {
             details: {
                 tooSmall: sizeFilter.countSmall,
                 tooLarge: sizeFilter.countLarge,
-                duplicate: dupFilter.removed.length
-            }
+                duplicate: dupFilter.removed.length,
+            },
         };
 
         return { remaining: result, summary };

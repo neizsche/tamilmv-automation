@@ -1,8 +1,8 @@
-const cheerio = require("cheerio");
-const { createScraperClient } = require("../utils/httpClient");
-const { RetryConfig } = require("../utils/constants");
-const { wait } = require("../utils/helpers");
-const { log } = require("../utils/logger");
+const cheerio = require('cheerio');
+const { createScraperClient } = require('../utils/httpClient');
+const { RetryConfig } = require('../utils/constants');
+const { wait } = require('../utils/helpers');
+const { log } = require('../utils/logger');
 
 class TorrentScraper {
     constructor() {
@@ -15,9 +15,9 @@ class TorrentScraper {
             const $ = cheerio.load(data);
             const torrentLinks = [];
 
-            $("a").each((index, element) => {
-                const href = $(element).attr("href");
-                if (href && href.includes("applications/core/interface/file/attachment.php")) {
+            $('a').each((index, element) => {
+                const href = $(element).attr('href');
+                if (href && href.includes('applications/core/interface/file/attachment.php')) {
                     const link = href.split('"')[0].trim();
                     log.debug(`[SCRAPER] Found torrent link: ${link}`);
                     torrentLinks.push(link);
@@ -33,7 +33,11 @@ class TorrentScraper {
         }
     }
 
-    async scrapeWithRetry(url, maxRetries = RetryConfig.SCRAPING_MAX_RETRIES, delayMs = RetryConfig.SCRAPING_DELAY) {
+    async scrapeWithRetry(
+        url,
+        maxRetries = RetryConfig.SCRAPING_MAX_RETRIES,
+        delayMs = RetryConfig.SCRAPING_DELAY
+    ) {
         let attempts = 0;
         let links = [];
 
@@ -63,7 +67,6 @@ class TorrentScraper {
                 }
 
                 await wait(delayMs);
-
             } catch (error) {
                 log.error(`Failed to scrape ${item.title}: ${error.message}`);
             }

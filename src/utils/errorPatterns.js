@@ -2,7 +2,7 @@ function createSuccess(data = null, message = '') {
     return {
         success: true,
         data,
-        message
+        message,
     };
 }
 
@@ -13,11 +13,11 @@ function createFailure(error, data = null) {
         success: false,
         error: errorObj,
         message: errorObj.message,
-        data
+        data,
     };
 }
 
-async function safeExecute(fn, operationName = 'operation') {
+async function safeExecute(fn) {
     try {
         const data = await fn();
         return createSuccess(data);
@@ -26,14 +26,21 @@ async function safeExecute(fn, operationName = 'operation') {
     }
 }
 
-function createRadarrResult({ added = false, exists = false, hasFile = false, title = '', year = '', notified = false }) {
+function createRadarrResult({
+    added = false,
+    exists = false,
+    hasFile = false,
+    title = '',
+    year = '',
+    notified = false,
+}) {
     return {
         added,
         exists,
         hasFile,
         title,
         year,
-        notified
+        notified,
     };
 }
 
@@ -53,5 +60,5 @@ module.exports = {
     createFailure,
     safeExecute,
     createRadarrResult,
-    withErrorLogging
+    withErrorLogging,
 };

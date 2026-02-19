@@ -1,10 +1,10 @@
-const fs = require("fs");
-const path = require("path");
-const { createScraperClient } = require("../utils/httpClient");
-const { Timeouts } = require("../utils/constants");
-const config = require("../config");
-const { log } = require("../utils/logger");
-const { ensureFolderExists } = require("../utils/helpers");
+const fs = require('fs');
+const path = require('path');
+const { createScraperClient } = require('../utils/httpClient');
+const { Timeouts } = require('../utils/constants');
+const config = require('../config');
+const { log } = require('../utils/logger');
+const { ensureFolderExists } = require('../utils/helpers');
 
 class TorrentDownloader {
     constructor() {
@@ -18,12 +18,12 @@ class TorrentDownloader {
         try {
             const writer = fs.createWriteStream(filePath);
             const response = await this.httpClient.get(torrentLink, {
-                responseType: "stream"
+                responseType: 'stream',
             });
             response.data.pipe(writer);
 
-            return new Promise((resolve, reject) => {
-                writer.on("finish", () => {
+            return new Promise((resolve) => {
+                writer.on('finish', () => {
                     if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
                         resolve(true);
                     } else {
@@ -31,9 +31,13 @@ class TorrentDownloader {
                         resolve(false);
                     }
                 });
-                writer.on("error", (err) => {
+                writer.on('error', (err) => {
                     log.warning(`Stream error downloading ${fileName}: ${err.message}`);
-                    try { fs.unlinkSync(filePath); } catch (e) { }
+                    try {
+                        fs.unlinkSync(filePath);
+                    } catch {
+                        // Ignore error during cleanup
+                    }
                     resolve(false);
                 });
             });
@@ -43,7 +47,9 @@ class TorrentDownloader {
                 if (fs.existsSync(filePath)) {
                     fs.unlinkSync(filePath);
                 }
-            } catch (e) { }
+            } catch {
+                // Ignore error during cleanup
+            }
             return false;
         }
     }
@@ -66,11 +72,11 @@ class TorrentDownloader {
     cleanupOrphaned() {
         try {
             const files = fs.readdirSync(config.TORRENT_FOLDER);
-            const torrentFiles = files.filter(f => f.endsWith('.torrent'));
+            const torrentFiles = files.filter((f) => f.endsWith('.torrent'));
 
             if (torrentFiles.length > 0) {
                 log.info(`Cleaning up ${torrentFiles.length} orphaned torrent files`);
-                torrentFiles.forEach(file => {
+                torrentFiles.forEach((file) => {
                     this.delete(file);
                 });
             }

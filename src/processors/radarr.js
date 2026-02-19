@@ -1,6 +1,6 @@
-const radarr = require("../services/radarr");
-const { parseMovieName } = require("../utils/helpers");
-const { log } = require("../utils/logger");
+const radarr = require('../services/radarr');
+const { parseMovieName } = require('../utils/helpers');
+const { log } = require('../utils/logger');
 
 class RadarrIntegration {
     async _checkStatus(torrent) {
@@ -17,7 +17,7 @@ class RadarrIntegration {
         const movieProcessing = new Map();
 
         const statusChecks = await Promise.allSettled(
-            torrents.map(torrent => this._checkStatus(torrent))
+            torrents.map((torrent) => this._checkStatus(torrent))
         );
 
         for (const result of statusChecks) {
@@ -25,10 +25,14 @@ class RadarrIntegration {
                 const { torrent, movieStatus, parsed, sizeGB } = result.value;
 
                 if (movieStatus.exists && movieStatus.hasFile) {
-                    log.debug(`[RADARR_DECISION] ${parsed.display}: Exists=TRUE, HasFile=TRUE -> DELETE`);
+                    log.debug(
+                        `[RADARR_DECISION] ${parsed.display}: Exists=TRUE, HasFile=TRUE -> DELETE`
+                    );
                     toDelete.push(torrent);
                 } else if (movieStatus.exists && !movieStatus.hasFile) {
-                    log.debug(`[RADARR_DECISION] ${parsed.display}: Exists=TRUE, HasFile=FALSE -> QUEUE (Download)`);
+                    log.debug(
+                        `[RADARR_DECISION] ${parsed.display}: Exists=TRUE, HasFile=FALSE -> QUEUE (Download)`
+                    );
                     toStart.push(torrent);
                     movieProcessing.set(parsed.display, {
                         name: parsed.display,
@@ -36,10 +40,12 @@ class RadarrIntegration {
                         size: sizeGB,
                         addedToRadarr: false,
                         notified: false,
-                        downloading: true
+                        downloading: true,
                     });
                 } else {
-                    log.debug(`[RADARR_DECISION] ${parsed.display}: Exists=FALSE -> QUEUE (Add & Download)`);
+                    log.debug(
+                        `[RADARR_DECISION] ${parsed.display}: Exists=FALSE -> QUEUE (Add & Download)`
+                    );
                     toStart.push(torrent);
                     movieProcessing.set(parsed.display, {
                         name: parsed.display,
@@ -47,7 +53,7 @@ class RadarrIntegration {
                         size: sizeGB,
                         addedToRadarr: true,
                         notified: false,
-                        downloading: true
+                        downloading: true,
                     });
                 }
             } else {
@@ -62,13 +68,13 @@ class RadarrIntegration {
         return Array.from(movieProcessing.entries())
             .filter(([_, status]) => status.addedToRadarr)
             .map(([movieName, status]) => {
-                const torrent = torrentsToStart.find(t => {
+                const torrent = torrentsToStart.find((t) => {
                     const parsed = parseMovieName(t.name);
                     return parsed.display === movieName;
                 });
                 return { movieName, status, torrent };
             })
-            .filter(item => item.torrent);
+            .filter((item) => item.torrent);
     }
 
     async addMovies(torrentsToStart, movieProcessing) {
@@ -87,7 +93,9 @@ class RadarrIntegration {
                         log.info(`Movie already has file in Radarr: ${movieName}`);
                     } else {
                         status.addedToRadarr = false;
-                        log.info(`Movie exists in Radarr without file: ${movieName} - will download`);
+                        log.info(
+                            `Movie exists in Radarr without file: ${movieName} - will download`
+                        );
                     }
                 } else {
                     status.addedToRadarr = false;
@@ -101,8 +109,6 @@ class RadarrIntegration {
 
         await Promise.allSettled(addPromises);
     }
-
-
 }
 
 module.exports = new RadarrIntegration();

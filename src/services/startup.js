@@ -3,6 +3,7 @@ const config = require('../config');
 const { log } = require('../utils/logger');
 const qbittorrent = require('./qbittorrent');
 const domainResolver = require('./domainResolver');
+const LogBlock = require('../utils/logBlock');
 
 async function validateSetup(ignoreFeed, daysToFetch) {
     const configStr = ignoreFeed ? `Ignore feeds, fetch ${daysToFetch}d` : 'Use existing feeds';
@@ -48,4 +49,31 @@ async function validateSetup(ignoreFeed, daysToFetch) {
     log.info('');
 }
 
-module.exports = { validateSetup };
+async function refreshState() {
+    await LogBlock.withBlock('SESSION STARTED', async (block) => {
+        block.log('Initializing State Cache...');
+        const radarr = require('./radarr');
+        const qbittorrent = require('./qbittorrent');
+        const state = require('./state');
+
+        try {
+            // Parallel fetch
+            const [movies, torrents] = await Promise.all([
+                radarr.getMovies(),
+                qbittorrent.getTorrents(false), // Get all torrents
+            ]);
+
+            if (movies) state.setMovies(movies);
+            if (torrents) state.setTorrents(torrents);
+
+            block.log(
+                `State initialized: ${state.movies.size} movies, ${state.torrents.size} torrents`
+            );
+        } catch (error) {
+            log.error('Failed to refresh state cache:', error);
+            throw error;
+        }
+    });
+}
+
+module.exports = { validateSetup, refreshState };

@@ -10,7 +10,22 @@ const https = require('https');
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 10 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
 
+const state = require('./state');
+
 class RadarrClient {
+    async getMovies() {
+        try {
+            const response = await axios.get(`${config.RADARR_URL}/api/v3/movie`, {
+                headers: { 'X-Api-Key': config.RADARR_API_KEY },
+                timeout: 30000,
+            });
+            return response.data;
+        } catch (error) {
+            log.error('Failed to fetch movies from Radarr', error.message);
+            return [];
+        }
+    }
+
     async addMovie(torrentName) {
         const movieName = extractMovieName(torrentName);
 
@@ -28,8 +43,33 @@ class RadarrClient {
                     );
 
                     if (!lookupResponse.data?.length) {
-                        log.warning(`Movie not found: ${movieName}`);
-                        return;
+                        // Fallback: Try without year
+                        const cleanName = movieName.replace(/\s*\(\d{4}\)$/, '');
+                        if (cleanName !== movieName) {
+                            log.debug(
+                                `Movie not found: '${movieName}'. Retrying with '${cleanName}'...`
+                            );
+                            const retryResponse = await axios.get(
+                                `${config.RADARR_URL}/api/v3/movie/lookup`,
+                                {
+                                    params: { term: cleanName },
+                                    headers: { 'X-Api-Key': config.RADARR_API_KEY },
+                                    timeout: 10000,
+                                }
+                            );
+
+                            if (retryResponse.data?.length) {
+                                lookupResponse.data = retryResponse.data;
+                            } else {
+                                log.warning(
+                                    `Movie not found: ${movieName} (also failed with ${cleanName})`
+                                );
+                                return;
+                            }
+                        } else {
+                            log.warning(`Movie not found: ${movieName}`);
+                            return;
+                        }
                     }
 
                     const movieData = lookupResponse.data[0];
@@ -39,24 +79,32 @@ class RadarrClient {
                         log.warning(
                             `Movie already exists in Radarr: ${movieData.title} (${movieData.year})`
                         );
+                        // Update cache just in case
+                        state.addMovie(movieData);
                         return { added: false, exists: true };
                     }
 
+                    // Optimize: Check cache first
+                    const existingInCache = state.getMovie(movieData.title);
+                    if (existingInCache) {
+                        log.warning(
+                            `Movie already exists (cache): ${movieData.title} (${movieData.year})`
+                        );
+                        return { added: false, exists: true };
+                    }
                     // Double check by TMDB ID via API if lookup property is unreliable
                     try {
-                        const existingMovie = await axios.get(`${config.RADARR_URL}/api/v3/movie`, {
-                            params: { tmdbId: movieData.tmdbId },
-                            headers: { 'X-Api-Key': config.RADARR_API_KEY },
-                            timeout: 10000,
-                        });
+                        const existingMovie = state.getMovieByTmdbId(movieData.tmdbId);
 
-                        if (existingMovie.data && existingMovie.data.length > 0) {
+                        if (existingMovie) {
                             log.warning(
                                 `Movie already exists (confirmed by ID): ${movieData.title} (${movieData.year})`
                             );
+                            // Ensure cache is up to date (idempotent)
+                            state.addMovie(existingMovie);
                             return { added: false, exists: true };
                         }
-                    } catch (err) {
+                    } catch {
                         // Ignore error here, proceed to add
                     }
 
@@ -73,15 +121,24 @@ class RadarrClient {
                     };
 
                     try {
-                        await axios.post(`${config.RADARR_URL}/api/v3/movie`, movieToAdd, {
-                            headers: {
-                                'X-Api-Key': config.RADARR_API_KEY,
-                                'Content-Type': 'application/json',
-                            },
-                            httpAgent,
-                            httpsAgent,
-                            timeout: 10000,
-                        });
+                        const addedMovieResponse = await axios.post(
+                            `${config.RADARR_URL}/api/v3/movie`,
+                            movieToAdd,
+                            {
+                                headers: {
+                                    'X-Api-Key': config.RADARR_API_KEY,
+                                    'Content-Type': 'application/json',
+                                },
+                                httpAgent,
+                                httpsAgent,
+                                timeout: 10000,
+                            }
+                        );
+
+                        // Add to cache
+                        if (addedMovieResponse.data) {
+                            state.addMovie(addedMovieResponse.data);
+                        }
                     } catch (addError) {
                         // Handle specific case where movie might have been added concurrently or lookup was stale
                         if (
@@ -92,6 +149,9 @@ class RadarrClient {
                             log.warning(
                                 `Movie already exists (caught during add): ${movieData.title}`
                             );
+                            // It exists, so we should essentially pretend we added it or it was there
+                            // We can't get the full object easily without another query, but we know it exists
+                            // For now, allow next sync to catch it, or do a lookup
                             return { added: false, exists: true };
                         }
                         throw addError; // Re-throw other errors
@@ -127,6 +187,21 @@ class RadarrClient {
     async checkMovieStatus(torrentName) {
         const movieName = extractMovieName(torrentName);
 
+        // 1. Check Cache
+        const cachedMovie = state.getMovie(movieName);
+        if (cachedMovie) {
+            const hasFile = cachedMovie.hasFile; // || cachedMovie.movieFileId > 0;
+            // Radarr 'movie' object has 'hasFile' boolean.
+
+            log.debug(`[CACHE_HIT] ${movieName} found in state. HasFile: ${hasFile}`);
+            return {
+                exists: true,
+                hasFile: hasFile,
+                title: cachedMovie.title,
+                year: cachedMovie.year,
+            };
+        }
+
         try {
             return await retryWithBackoff(
                 async () => {
@@ -140,8 +215,33 @@ class RadarrClient {
                     );
 
                     if (!lookupResponse.data?.length) {
-                        log.debug(`[RADARR_API] Lookup for '${movieName}' returned 0 results.`);
-                        return { exists: false, hasFile: false };
+                        // Fallback: Try without year
+                        const cleanName = movieName.replace(/\s*\(\d{4}\)$/, '');
+                        if (cleanName !== movieName) {
+                            log.debug(
+                                `[RADARR_API] Lookup for '${movieName}' failed. Retrying with '${cleanName}'...`
+                            );
+                            const retryResponse = await axios.get(
+                                `${config.RADARR_URL}/api/v3/movie/lookup`,
+                                {
+                                    params: { term: cleanName },
+                                    headers: { 'X-Api-Key': config.RADARR_API_KEY },
+                                    timeout: 10000,
+                                }
+                            );
+
+                            if (retryResponse.data?.length) {
+                                lookupResponse.data = retryResponse.data;
+                            } else {
+                                log.debug(
+                                    `[RADARR_API] Lookup for '${cleanName}' returned 0 results.`
+                                );
+                                return { exists: false, hasFile: false };
+                            }
+                        } else {
+                            log.debug(`[RADARR_API] Lookup for '${movieName}' returned 0 results.`);
+                            return { exists: false, hasFile: false };
+                        }
                     }
 
                     const movieData = lookupResponse.data[0];
@@ -149,22 +249,26 @@ class RadarrClient {
                         `[RADARR_API] Lookup for '${movieName}' found: ${movieData.title} (Year: ${movieData.year}, TMDB: ${movieData.tmdbId})`
                     );
 
-                    const existingResponse = await axios.get(`${config.RADARR_URL}/api/v3/movie`, {
-                        headers: { 'X-Api-Key': config.RADARR_API_KEY },
-                        timeout: 10000,
-                    });
+                    // If lookup says it's added, trust it, and maybe update cache?
+                    if (movieData.added && movieData.added !== '0001-01-01T00:00:00Z') {
+                        // It is in Radarr.
+                        // However, lookup result might not have 'hasFile' set correctly or same as main movie object?
+                        // Usually lookup returns the movie object if it exists.
+                        // Let's verify with explicit fetch or just trust lookup if we want speed.
+                        // But we fallback to ID check below.
+                    }
 
-                    const existingMovie = existingResponse.data.find(
-                        (m) => m.tmdbId === movieData.tmdbId
-                    );
+                    // Double check by TMDB ID via index (O(1)) instead of full API fetch (O(N))
+                    const existingMovie = state.getMovieByTmdbId(movieData.tmdbId);
 
                     if (!existingMovie) {
                         log.debug(
-                            `[RADARR_API] '${movieData.title}' not found in library (via GET /api/v3/movie).`
+                            `[RADARR_API] '${movieData.title}' not found in library (via TMDB ID check).`
                         );
                         return { exists: false, hasFile: false };
                     }
 
+                    // Movie found in cache (via TMDB ID)
                     log.debug(
                         `[RADARR_API] '${existingMovie.title}' found in library. HasFile: ${existingMovie.hasFile}, Monitored: ${existingMovie.monitored}`
                     );

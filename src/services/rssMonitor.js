@@ -45,7 +45,7 @@ class RSSMonitor {
                 } else {
                     throw new Error('No items in feed file');
                 }
-            } catch (error) {
+            } catch {
                 const date = new Date();
                 date.setDate(date.getDate() - 30);
                 log.warn(`[${feedKey}] Error reading feed file, defaulting to 30 days ago`);
@@ -66,7 +66,7 @@ class RSSMonitor {
             return;
         }
 
-        log.info(`[${feedKey}] Fetching feed from ${feedUrl}...`);
+        log.debug(`[${feedKey}] Fetching feed from ${feedUrl}...`);
 
         try {
             const response = await axios.get(feedUrl, {
@@ -99,10 +99,18 @@ class RSSMonitor {
                     : [];
             const newItems = [];
 
+            let skippedCount = 0;
             for (const item of items) {
                 const itemDate = new Date(item.pubDate);
-                if (itemDate <= this.lastPubDates[feedKey]) break;
+                if (itemDate <= this.lastPubDates[feedKey]) {
+                    skippedCount++;
+                    continue;
+                }
                 newItems.push(item);
+            }
+
+            if (skippedCount > 0) {
+                log.info(`[${feedKey}] Skipped ${skippedCount} items (older than last run)`);
             }
 
             if (newItems.length === 0) {
@@ -111,25 +119,24 @@ class RSSMonitor {
             } else {
                 const stats = await orchestrator.processNew(newItems, feedKey);
 
-                log.info('');
-                log.info(`┌─ [${feedKey}] Processing ─────────────────────────────────`);
-                log.info(`│  RSS Items:     ${newItems.length}`);
-                log.info(
-                    `│  Torrents:      ${stats.torrents} (${stats.torrentsAdded} added to qBit)`
-                );
-                log.info(`│  Filtering:     ${stats.filterSummary}`);
-                log.info(`│  Added:         ${stats.moviesAdded}`);
-                log.info(`│  Downloading:   ${stats.moviesStarted}`);
+                const LogBlock = require('../utils/logBlock');
+                await LogBlock.withBlock(`[${feedKey}] Processing`, async (block) => {
+                    block.log(`RSS Items:       ${newItems.length}`);
+                    block.log(`Radarr Filtered: ${stats.radarrFiltered || 0}`);
+                    block.log(
+                        `Torrents:        ${stats.torrents} (${stats.torrentsAdded} added to qBit)`
+                    );
+                    block.log(`Filtering:       ${stats.filterSummary}`);
+                    block.log(`Added:           ${stats.moviesAdded}`);
+                    block.log(`Downloading:     ${stats.moviesStarted}`);
 
-                if (stats.downloadingDetails && stats.downloadingDetails.length > 0) {
-                    log.info(`│  Details:`);
-                    for (const movie of stats.downloadingDetails) {
-                        log.info(`│    - ${movie.name} (${movie.size} GB)`);
+                    if (stats.downloadingDetails && stats.downloadingDetails.length > 0) {
+                        block.log(`Details:`);
+                        for (const movie of stats.downloadingDetails) {
+                            block.log(`  - ${movie.name} (${movie.size} GB)`);
+                        }
                     }
-                }
-
-                log.info('└────────────────────────────────────────────────────────────');
-                log.info('');
+                });
 
                 this.lastPubDates[feedKey] = new Date(newItems[0].pubDate);
 
@@ -145,8 +152,16 @@ class RSSMonitor {
     }
 
     async runChecks() {
+        // Refresh state at the start of the session
+        const { refreshState } = require('./startup');
+        try {
+            await refreshState();
+        } catch (error) {
+            log.error('Failed to refresh state during session', error);
+        }
+
         const startTime = new Date();
-        log.info('[MAINTENANCE] Running cleanup...');
+        log.debug('[MAINTENANCE] Running cleanup...');
         const qbittorrent = require('./qbittorrent');
         await qbittorrent.cleanupCompletedTorrents();
 
@@ -175,16 +190,15 @@ class RSSMonitor {
         const nextRun = new Date(now.getTime() + config.CHECK_INTERVAL);
         const timeFormat = { hour: '2-digit', minute: '2-digit', hour12: true };
 
-        log.info('');
-        log.info('┌─ SESSION COMPLETE ───────────────────────────────────────');
-        log.info(`│  Completed: ${now.toLocaleTimeString('en-US', timeFormat)}`);
-        log.info(`│  Duration:  ${durationSeconds}s`);
-        log.info(`│  Next run:  ${nextRun.toLocaleTimeString('en-US', timeFormat)}`);
-        log.info('└──────────────────────────────────────────────────────────');
-        log.info('');
+        const LogBlock = require('../utils/logBlock');
+        await LogBlock.withBlock('SESSION COMPLETE', async (block) => {
+            block.log(`Completed: ${now.toLocaleTimeString('en-US', timeFormat)}`);
+            block.log(`Duration:  ${durationSeconds}s`);
+            block.log(`Next run:  ${nextRun.toLocaleTimeString('en-US', timeFormat)}`);
+        });
     }
 
-    startMonitoring(ignoreFeed = false, days = 2) {
+    async startMonitoring(ignoreFeed = false, days = 2) {
         if (!config.FEEDS || Object.keys(config.FEEDS).length === 0) {
             log.error('No FEEDS configured! Please check your config.');
             return;
@@ -196,12 +210,11 @@ class RSSMonitor {
 
         const intervalMinutes = config.CHECK_INTERVAL / 60000;
 
-        log.info('');
-        log.info('┌─ RSS MONITORING ─────────────────────────────────────────');
-        log.info(`│  Status: Started (checking every ${intervalMinutes} min)`);
-        log.info(`│  Feeds:  ${Object.keys(config.FEEDS).length} enabled`);
-        log.info('└──────────────────────────────────────────────────────────');
-        log.info('');
+        const LogBlock = require('../utils/logBlock');
+        await LogBlock.withBlock('RSS MONITORING', (block) => {
+            block.log(`Status: Started (checking every ${intervalMinutes} min)`);
+            block.log(`Feeds:  ${Object.keys(config.FEEDS).length} enabled`);
+        });
 
         this.runChecks();
 

@@ -6,6 +6,7 @@ const config = require('../../../src/config');
 const orchestrator = require('../../../src/processors/orchestrator');
 const notifier = require('../../../src/services/notifier');
 const domainResolver = require('../../../src/services/domainResolver');
+const { log } = require('../../../src/utils/logger');
 // const qbittorrent = require('../../../src/services/qbittorrent'); // It is required dynamically
 
 // Mock dependencies
@@ -114,6 +115,9 @@ describe('RSSMonitor', () => {
             });
 
             await rssMonitor.checkRSSFeed('test_feed', 'feed_path.xml');
+            
+            expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('Fetching feed'));
+            expect(log.info).toHaveBeenCalledWith(expect.stringContaining('Radarr Filtered:'));
 
             expect(domainResolver.resolve).toHaveBeenCalled();
             expect(axios.get).toHaveBeenCalled();
@@ -142,6 +146,7 @@ describe('RSSMonitor', () => {
 
             await rssMonitor.checkRSSFeed('test_feed', 'feed_path.xml');
 
+            expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('Fetching feed'));
             expect(notifier.notifyError).toHaveBeenCalledWith(
                 expect.stringContaining('RSS Feed'),
                 expect.stringContaining('Network error')

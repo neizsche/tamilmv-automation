@@ -109,6 +109,84 @@ class RadarrIntegration {
 
         await Promise.allSettled(addPromises);
     }
+    async filterItems(items) {
+        // Group items by movie name to avoid redundant checks
+        const movieMap = new Map();
+        const itemsToProcess = [];
+
+        // 1. Extract movie names and group items
+        for (const item of items) {
+            try {
+                // Use title for parsing (RSS feed title: "Movie Name (Year) ...")
+                const parsed = parseMovieName(item.title);
+                if (!parsed.display) continue;
+
+                if (!movieMap.has(parsed.display)) {
+                    movieMap.set(parsed.display, {
+                        parsed,
+                        items: [],
+                        status: null, // Will be populated later
+                    });
+                }
+                movieMap.get(parsed.display).items.push(item);
+            } catch (error) {
+                log.warning(`Failed to parse movie name from RSS item: ${item.title}`);
+                // If we can't parse it, safe to process it (let the scraper handle it)
+                itemsToProcess.push(item);
+            }
+        }
+
+        // 2. Check Radarr status for each unique movie
+        const moviesToCheck = Array.from(movieMap.values());
+        log.debug(`[RADARR_CHECK] Checking status for ${moviesToCheck.length} unique movie(s)...`);
+
+        // Check sequentially or in small batches to be nice to Radarr API?
+        // Parallel is fine for typical RSS feed size (10-20 items)
+        await Promise.allSettled(
+            moviesToCheck.map(async (entry) => {
+                try {
+                    const status = await radarr.checkMovieStatus(entry.parsed.display);
+                    entry.status = status;
+                } catch (error) {
+                    log.error(
+                        `Error checking Radarr status for ${entry.parsed.display}:`,
+                        error.message
+                    );
+                    // If check fails, assume we need to process it
+                    entry.status = { exists: false };
+                }
+            })
+        );
+
+        // 3. Filter items
+        let skippedCount = 0;
+
+        for (const entry of moviesToCheck) {
+            const { parsed, status, items } = entry;
+
+            if (status && status.exists && status.hasFile) {
+                log.debug(
+                    `[RADARR_SKIP] Skipping ${items.length} item(s) for "${parsed.display}" (Already has file in Radarr)`
+                );
+                skippedCount += items.length;
+            } else {
+                // Determine reason for processing
+                let reason = 'New Movie';
+                if (status && status.exists && !status.hasFile) {
+                    reason = 'Exists but missing file';
+                }
+
+                log.debug(`[RADARR_PROCESS] "${parsed.display}" -> ${reason}`);
+                itemsToProcess.push(...items);
+            }
+        }
+
+        if (skippedCount > 0) {
+            log.debug(`[RADARR_FILTER] Skipped total ${skippedCount} item(s) via early check.`);
+        }
+
+        return itemsToProcess;
+    }
 }
 
 module.exports = new RadarrIntegration();

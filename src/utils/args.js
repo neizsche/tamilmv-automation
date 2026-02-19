@@ -26,7 +26,9 @@ const parseArgs = () => {
         }
     }
 
-    return { ignoreFeed, daysToFetch };
+    const reset = args.includes('--reset');
+
+    return { ignoreFeed, daysToFetch, reset };
 };
 
 module.exports = { parseArgs };

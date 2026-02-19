@@ -1,6 +1,5 @@
 const radarrProcessor = require('../../../src/processors/radarr');
 const radarrService = require('../../../src/services/radarr');
-const { parseMovieName } = require('../../../src/utils/helpers');
 const { log } = require('../../../src/utils/logger');
 
 jest.mock('../../../src/services/radarr');
@@ -28,6 +27,7 @@ describe('RadarrIntegration Processor', () => {
 
             expect(toStart).toHaveLength(1);
             expect(toDelete).toHaveLength(0);
+            expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('Exists=FALSE'));
             expect(movieProcessing.get('MOVIE 1').addedToRadarr).toBe(true);
             expect(movieProcessing.get('MOVIE 1').downloading).toBe(true);
         });
@@ -41,6 +41,9 @@ describe('RadarrIntegration Processor', () => {
 
             expect(toStart).toHaveLength(1);
             expect(toDelete).toHaveLength(0);
+            expect(log.debug).toHaveBeenCalledWith(
+                expect.stringContaining('Exists=TRUE, HasFile=FALSE')
+            );
             expect(movieProcessing.get('MOVIE 1').addedToRadarr).toBe(false);
             expect(movieProcessing.get('MOVIE 1').downloading).toBe(true);
         });
@@ -54,6 +57,9 @@ describe('RadarrIntegration Processor', () => {
 
             expect(toStart).toHaveLength(0);
             expect(toDelete).toHaveLength(1);
+            expect(log.debug).toHaveBeenCalledWith(
+                expect.stringContaining('Exists=TRUE, HasFile=TRUE')
+            );
             expect(movieProcessing.has('MOVIE 1')).toBe(false);
         });
 

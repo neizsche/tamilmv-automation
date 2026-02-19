@@ -106,7 +106,7 @@ const config = {
         TOPIC: process.env.NTFY_TOPIC || 'tamilmv-movies',
         SERVER: process.env.NTFY_SERVER || 'https://ntfy.sh',
     },
-    VERBOSE_LOGGING: true,
+    VERBOSE_LOGGING: process.env.VERBOSE_LOGGING === 'true',
 };
 
 // Set log level based on final config (guard for test environments where mock may not include it)

@@ -1,8 +1,6 @@
 const orchestrator = require('../../../src/processors/orchestrator');
-const config = require('../../../src/config');
 const qbittorrent = require('../../../src/services/qbittorrent');
 const csvLogger = require('../../../src/utils/csvLogger');
-const { wait } = require('../../../src/utils/helpers');
 const { log } = require('../../../src/utils/logger');
 const downloader = require('../../../src/processors/downloader');
 const scraper = require('../../../src/processors/scraper');
@@ -141,6 +139,8 @@ describe('TorrentOrchestrator', () => {
             expect(radarrProcessor.addMovies).toHaveBeenCalled();
             expect(qbittorrent.manageTorrents).toHaveBeenCalledWith(toStart, 'start');
             expect(stats.moviesStarted).toBe(1);
+            // expect(csvLogger.logAdded).toHaveBeenCalled(); // logToCSV is commented out in code? No, line 139 calls it.
+            // But logToCSV is called for torrentsToStart.
             expect(csvLogger.logAdded).toHaveBeenCalled();
         });
 
@@ -164,6 +164,7 @@ describe('TorrentOrchestrator', () => {
 
             await orchestrator.cleanUnwanted();
 
+            expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('Moving to delete'));
             expect(qbittorrent.manageTorrents).toHaveBeenCalledWith(
                 expect.arrayContaining([{ hash: 'hash1', name: 'Movie 1' }]),
                 'delete',
@@ -180,22 +181,6 @@ describe('TorrentOrchestrator', () => {
             expect(stats.moviesAdded).toBe(0);
         });
     });
-
-    describe('_cleanupLeftoverStoppedTorrents', () => {
-        it('should delete leftover stopped torrents', async () => {
-            qbittorrent.getTorrents.mockResolvedValue([{ hash: 'hash2', name: 'Stopped Legacy' }]);
-
-            // Active hashes doesn't include hash2
-            await orchestrator._cleanupLeftoverStoppedTorrents(['hash1']);
-
-            expect(qbittorrent.manageTorrents).toHaveBeenCalledWith(
-                expect.arrayContaining([{ hash: 'hash2', name: 'Stopped Legacy' }]),
-                'delete',
-                expect.any(String)
-            );
-        });
-    });
-
     describe('_cleanupOrphanedStoppedTorrents', () => {
         it('should delete orphaned torrents if movie file exists in Radarr', async () => {
             const torrents = [{ hash: 'hash1' }];
@@ -230,6 +215,7 @@ describe('TorrentOrchestrator', () => {
                 .spyOn(orchestrator, 'processSingle')
                 .mockResolvedValue(true);
 
+            radarrProcessor.filterItems.mockResolvedValue(items);
             qbittorrent.getTorrents.mockResolvedValue([{ hash: 'hash' }]);
 
             // Mock cleanUnwanted
@@ -244,7 +230,12 @@ describe('TorrentOrchestrator', () => {
             expect(scraper.scrapeAll).toHaveBeenCalledWith(items, 200);
             expect(processSingleSpy).toHaveBeenCalled();
             expect(cleanSpy).toHaveBeenCalled();
+            expect(cleanSpy).toHaveBeenCalled();
             expect(stats.moviesAdded).toBe(1);
+            expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('Scraping 1 item(s)'));
+            expect(log.debug).toHaveBeenCalledWith(
+                expect.stringContaining('Added 1/1 to qBittorrent')
+            );
             expect(downloader.cleanupOrphaned).toHaveBeenCalled();
 
             processSingleSpy.mockRestore();

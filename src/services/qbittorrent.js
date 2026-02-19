@@ -6,6 +6,7 @@ const config = require('../config');
 const { log } = require('../utils/logger');
 const { parseMovieName } = require('../utils/helpers');
 const csvLogger = require('../utils/csvLogger');
+const state = require('./state'); // Import StateService
 
 class QBittorrentClient {
     constructor() {
@@ -121,12 +122,34 @@ class QBittorrentClient {
     }
 
     async getTorrents(applyFilter = false) {
+        // Optimize: Use cache if available and not forcing refresh
+        // But qBittorrent state changes often (download progress).
+        // If we need the *latest* state (e.g. knowing if something finished), we probably should fetch.
+        // However, 'orchestrator._cleanupLeftoverStoppedTorrents' calls this.
+        // If we want to fully rely on cache, we need a sync mechanism (polling).
+        // For now, let's keep fetching fresh data but update cache.
+
         const sid = await this.ensureAuthenticated();
 
         try {
             const { data } = await axios.get(`${config.TORRENT_URL}/info`, {
                 headers: { Cookie: `SID=${sid}` },
             });
+
+            // Update cache
+            state.setTorrents(data);
+
+            // Sync addedTorrents registry with live metadata from qBit
+            for (const torrent of data) {
+                if (state.addedTorrents.has(torrent.hash)) {
+                    state.registerAddedTorrent({
+                        hash: torrent.hash,
+                        name: torrent.name,
+                        size: torrent.size,
+                        category: torrent.category,
+                    });
+                }
+            }
 
             if (applyFilter) {
                 return data.filter(
@@ -140,61 +163,84 @@ class QBittorrentClient {
             return data;
         } catch (error) {
             log.error('Failed to get torrents', error);
+
             return [];
         }
     }
 
-    async manageTorrents(torrents, action, reason = '') {
+    async manageTorrents(torrents, action) {
         if (torrents.length === 0) return;
 
         const sid = await this.ensureAuthenticated();
 
-        for (const torrent of torrents) {
-            const form = new FormData();
-            form.append('hashes', torrent.hash);
+        // Batch all hashes into a single pipe-joined string (qBittorrent API supports this)
+        const hashes = torrents.map((t) => t.hash).join('|');
 
-            if (action === 'delete') {
-                form.append('deleteFiles', 'true');
-                // Log removal to CSV before deleting
+        const form = new FormData();
+        form.append('hashes', hashes);
+
+        if (action === 'delete') {
+            form.append('deleteFiles', 'true');
+            // Log removals to CSV before deleting
+            for (const torrent of torrents) {
                 csvLogger.logRemoved(torrent.name, torrent.size);
             }
+        }
 
-            try {
-                await axios.post(`${config.TORRENT_URL}/${action}`, form, {
-                    headers: {
-                        ...form.getHeaders(),
-                        Cookie: `SID=${sid}`,
-                    },
-                    timeout: 10000,
-                });
-            } catch (error) {
-                // If 403, try re-authenticating once
-                if (error.response?.status === 403) {
-                    log.warning(`Session expired for ${action} operation, re-authenticating...`);
-                    this.sid = null;
-                    try {
-                        const newSid = await this.login();
-                        await axios.post(`${config.TORRENT_URL}/${action}`, form, {
-                            headers: {
-                                ...form.getHeaders(),
-                                Cookie: `SID=${newSid}`,
-                            },
-                            timeout: 10000,
-                        });
-                        log.success(
-                            `Re-authenticated and ${action} successful for: ${torrent.name}`
-                        );
-                    } catch (retryError) {
-                        log.error(
-                            `Failed to ${action} torrent after re-auth: ${torrent.name}`,
-                            retryError
-                        );
+        try {
+            await axios.post(`${config.TORRENT_URL}/${action}`, form, {
+                headers: {
+                    ...form.getHeaders(),
+                    Cookie: `SID=${sid}`,
+                },
+                timeout: 10000,
+            });
+
+            // Update cache for all torrents
+            for (const torrent of torrents) {
+                if (action === 'delete') {
+                    state.removeTorrent(torrent.hash);
+                } else if (action === 'start') {
+                    const cached = state.getTorrent(torrent.hash);
+                    if (cached) {
+                        cached.state = 'downloading'; // Optimistic update
+                        state.addTorrent(cached);
                     }
-                } else {
-                    // Log more details about the error
-                    const errorDetails = error.response?.data || error.message;
-                    log.error(`Failed to ${action} torrent: ${torrent.name}`, errorDetails);
                 }
+            }
+        } catch (error) {
+            // If 403, try re-authenticating once and retry the entire batch
+            if (error.response?.status === 403) {
+                log.warning(`Session expired for ${action} operation, re-authenticating...`);
+                this.sid = null;
+                try {
+                    const newSid = await this.login();
+                    await axios.post(`${config.TORRENT_URL}/${action}`, form, {
+                        headers: {
+                            ...form.getHeaders(),
+                            Cookie: `SID=${newSid}`,
+                        },
+                        timeout: 10000,
+                    });
+                    log.success(
+                        `Re-authenticated and ${action} successful for batch of ${torrents.length}`
+                    );
+
+                    // Update cache on retry success
+                    for (const torrent of torrents) {
+                        if (action === 'delete') {
+                            state.removeTorrent(torrent.hash);
+                        }
+                    }
+                } catch (retryError) {
+                    log.error(`Failed to ${action} torrent batch after re-auth`, retryError);
+                }
+            } else {
+                const errorDetails = error.response?.data || error.message;
+                log.error(
+                    `Failed to ${action} torrent batch (${torrents.length} torrents)`,
+                    errorDetails
+                );
             }
         }
     }
@@ -301,9 +347,7 @@ class QBittorrentClient {
 
             // Execute all cleanup operations in sequence
             await this._stopFullyDownloadedTorrents(allTorrents);
-            //await this._deleteCompletedTorrents(allTorrents);
             await this._deleteStalledTorrents(allTorrents);
-            //await this._deleteStoppedTorrents(allTorrents);
         } catch (error) {
             log.error('Failed to cleanup torrents', error);
         }

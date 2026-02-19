@@ -4,6 +4,7 @@ const qbittorrent = require('../services/qbittorrent');
 const csvLogger = require('../utils/csvLogger');
 const { wait } = require('../utils/helpers');
 const { log } = require('../utils/logger');
+const state = require('../services/state');
 
 const downloader = require('./downloader');
 const scraper = require('./scraper');
@@ -55,25 +56,6 @@ class TorrentOrchestrator {
                 log.warning(`   - ${t.name}`);
             }
             await qbittorrent.manageTorrents(stoppedTorrents, 'start');
-        }
-    }
-
-    async _cleanupLeftoverStoppedTorrents(activeHashes) {
-        try {
-            const allStoppedTorrents = await qbittorrent.getTorrents(true);
-            if (allStoppedTorrents.length === 0) return;
-
-            const leftovers = allStoppedTorrents.filter((t) => !activeHashes.includes(t.hash));
-
-            if (leftovers.length > 0) {
-                log.warning(
-                    `[CLEANUP] Found ${leftovers.length} leftover stopped torrent(s). Removing...`
-                );
-                leftovers.forEach((t) => log.debug(`[CLEANUP] Removing leftover: ${t.name}`));
-                await qbittorrent.manageTorrents(leftovers, 'delete', 'leftover stopped torrent');
-            }
-        } catch (error) {
-            log.error('Error cleaning leftover stopped torrents', error);
         }
     }
 
@@ -138,7 +120,7 @@ class TorrentOrchestrator {
                 ) {
                     torrentsToDelete.push(torrent);
                     movieProcessing.delete(parsed.display);
-                    log.info(
+                    log.debug(
                         `[FILTER] Moving to delete: ${parsed.display} (movie already in Radarr with file)`
                     );
                 } else {
@@ -162,7 +144,7 @@ class TorrentOrchestrator {
 
             // Collect details for logging locally or passing up
             const downloadingDetails = [];
-            for (const [key, status] of movieProcessing.entries()) {
+            for (const status of movieProcessing.values()) {
                 if (status.downloading) {
                     downloadingDetails.push({ name: status.name, size: status.size });
                 }
@@ -175,13 +157,6 @@ class TorrentOrchestrator {
             await this._verifyStoppedTorrents(hashesToVerify);
 
             // Stricter cleanup: Remove ANY stopped torrent with our tag that we didn't just start
-            //await this._cleanupLeftoverStoppedTorrents(hashesToVerify);
-
-            // Legacy cleanup (might be redundant now but checking Radarr status is safer?
-            // The new _cleanupLeftoverStoppedTorrents is more aggressive and better for "stopped" torrents that filter.js missed)
-            // valid torrents are started, so they won't be stopped.
-            // invalid torrents (too small/large/dup) are deleted by filter.js.
-            // so any remaining stopped torrents are leftovers.
 
             await this._cleanupOrphanedStoppedTorrents();
         } catch (error) {
@@ -199,12 +174,27 @@ class TorrentOrchestrator {
             moviesStarted: 0,
             filterSummary: '',
             torrentsAdded: 0,
+            radarrFiltered: 0,
         };
 
         try {
-            log.info(`[${feedKey}] Scraping ${items.length} item(s)...`);
-            const flatLinks = await scraper.scrapeAll(items, 200);
+            // Early Radarr Check
+            const itemsToProcess = await radarr.filterItems(items);
+            const skippedCount = items.length - itemsToProcess.length;
+
+            if (skippedCount > 0) {
+                stats.radarrFiltered = skippedCount;
+                log.debug(
+                    `[${feedKey}] Skipped ${skippedCount} item(s) (Movies already in Radarr with file)`
+                );
+            }
+
+            log.debug(`[${feedKey}] Scraping ${itemsToProcess.length} item(s)...`);
+            const flatLinks = await scraper.scrapeAll(itemsToProcess, 200);
             stats.torrents = flatLinks.length;
+
+            // Clear the added-torrent registry for this fresh run
+            state.clearAddedTorrents();
 
             const BATCH_SIZE = 10;
             for (let i = 0; i < flatLinks.length; i += BATCH_SIZE) {
@@ -212,13 +202,17 @@ class TorrentOrchestrator {
                 await Promise.allSettled(batch.map((link) => this.processSingle(link)));
             }
 
+            // Fetch the torrent list once; getTorrents will also sync the addedTorrents registry
             const addedTorrents = await qbittorrent.getTorrents(true);
             stats.torrentsAdded = addedTorrents.length;
 
-            log.info(`[${feedKey}] Added ${stats.torrentsAdded}/${stats.torrents} to qBittorrent`);
+            // Expose the in-memory registry for downstream use
+            stats.addedTorrentMap = state.addedTorrents;
+
+            log.debug(`[${feedKey}] Added ${stats.torrentsAdded}/${stats.torrents} to qBittorrent`);
 
             // Initial log - will be updated with details after cleaning
-            log.info(`[${feedKey}] Filtering ${stats.torrentsAdded} torrent(s)...`);
+            log.debug(`[${feedKey}] Filtering ${stats.torrentsAdded} torrent(s)...`);
 
             // Wait for qBittorrent to register the new torrents and set their state
             await wait(2000);

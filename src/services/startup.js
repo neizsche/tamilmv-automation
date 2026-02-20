@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { radarrClient } = require('../utils/httpClient');
 const config = require('../config');
 const { log } = require('../utils/logger');
 const qbittorrent = require('./qbittorrent');
@@ -34,10 +34,7 @@ async function validateSetup(ignoreFeed, daysToFetch) {
 
     // Test Radarr connection
     try {
-        await axios.get(`${config.RADARR_URL}/api/v3/system/status`, {
-            headers: { 'X-Api-Key': config.RADARR_API_KEY },
-            timeout: 10000,
-        });
+        await radarrClient.get('/api/v3/system/status');
         log.info('│  Radarr:  ✓ Connected');
     } catch (error) {
         log.error('│  Radarr:  ✗ Connection failed');
@@ -67,7 +64,7 @@ async function refreshState() {
             if (torrents) state.setTorrents(torrents);
 
             block.log(
-                `State initialized: ${state.movies.size} movies, ${state.torrents.size} torrents`
+                `State initialized: ${state.radarritems.length} movies, ${state.otorrents.length} torrents`
             );
         } catch (error) {
             log.error('Failed to refresh state cache:', error);

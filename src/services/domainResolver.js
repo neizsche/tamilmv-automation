@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { defaultClient } = require('../utils/httpClient');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
@@ -32,7 +32,7 @@ class DomainResolver {
         for (const domain of allDomains) {
             try {
                 const start = Date.now();
-                await axios.head(domain, { timeout: 5000 });
+                await defaultClient.head(domain, { timeout: 5000 });
 
                 this.currentDomain = domain;
                 this.checkedDate = Date.now();
@@ -101,10 +101,6 @@ class DomainResolver {
         } catch (error) {
             log.error(`Failed to save domain cache: ${error.message}`);
         }
-    }
-
-    getCurrentDomain() {
-        return this.currentDomain;
     }
 
     getUrl(path) {

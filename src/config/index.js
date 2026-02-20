@@ -2,7 +2,6 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const { log, setVerbose } = require('../utils/logger');
 
-// Validate required environment variables on startup
 const REQUIRED_VARS = [
     'QBITTORRENT_URL',
     'QBITTORRENT_USERNAME',
@@ -19,7 +18,6 @@ if (missing.length > 0) {
     process.exit(1);
 }
 
-// Validate URL formats
 const urlVars = ['QBITTORRENT_URL', 'RADARR_URL'];
 for (const varName of urlVars) {
     const url = process.env[varName];
@@ -102,9 +100,9 @@ const config = {
         DELAY_MS: parseInt(process.env.SCRAPING_DELAY_MS) || 1000,
     },
     NTFY: {
-        ENABLED: process.env.NTFY_ENABLED === 'true' || false,
-        TOPIC: process.env.NTFY_TOPIC || 'tamilmv-movies',
-        SERVER: process.env.NTFY_SERVER || 'https://ntfy.sh',
+        ENABLED: process.env.NTFY_ENABLED === 'true',
+        TOPIC: process.env.NTFY_TOPIC,
+        SERVER: process.env.NTFY_SERVER,
     },
     VERBOSE_LOGGING: process.env.VERBOSE_LOGGING === 'true',
 };

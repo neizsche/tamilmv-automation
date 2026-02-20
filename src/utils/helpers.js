@@ -28,36 +28,6 @@ const extractMovieName = (torrentName) => {
     return torrentName;
 };
 
-const formatTorrentTitle = (url) => {
-    const regex = /forums\/topic\/\d+-(.+?)-(?:malayalam|tamil|hindi|telugu|kannada)/i;
-    const match = url.match(regex);
-    return match ? match[1] : url;
-};
-
-// Retry utility with exponential backoff
-const retryWithBackoff = async (
-    fn,
-    maxRetries = 3,
-    initialDelayMs = 1000,
-    operationName = 'operation'
-) => {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            return await fn();
-        } catch (error) {
-            if (attempt === maxRetries) {
-                // Last attempt failed, throw the error
-                throw error;
-            }
-
-            const delay = initialDelayMs * Math.pow(2, attempt - 1); // Exponential backoff
-            log.warning(
-                `${operationName} failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`
-            );
-            await wait(delay);
-        }
-    }
-};
 
 // Extract and parse movie information from torrent name
 function parseMovieName(torrentName) {
@@ -78,7 +48,5 @@ module.exports = {
     wait,
     ensureFolderExists,
     extractMovieName,
-    formatTorrentTitle,
-    retryWithBackoff,
     parseMovieName,
 };

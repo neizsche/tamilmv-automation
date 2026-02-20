@@ -33,17 +33,6 @@ class TorrentFilter {
         const allRemoved = [...removedTooSmall, ...removedTooLarge];
 
         if (allRemoved.length > 0) {
-            removedTooSmall.forEach((t) =>
-                log.debug(
-                    `[FILTER] Removed by size (Too Small): ${t.name} (${(t.size / 1024 ** 3).toFixed(2)} GB)`
-                )
-            );
-            removedTooLarge.forEach((t) =>
-                log.debug(
-                    `[FILTER] Removed by size (Too Large): ${t.name} (${(t.size / 1024 ** 3).toFixed(2)} GB)`
-                )
-            );
-
             await qbittorrent.manageTorrents(allRemoved, 'delete', 'inappropriate size');
         }
 
@@ -108,12 +97,11 @@ class TorrentFilter {
         return torrentsToDelete;
     }
 
-    async removeDuplicates(torrents) {
-        const allTorrents = await qbittorrent.getTorrents(false);
-
+    async removeDuplicates(torrents, allTorrents, originalBatchTorrents = null) {
         const removed = this._findDuplicates(torrents);
 
-        const currentBatchHashes = new Set(torrents.map((t) => t.hash));
+        const batchTorrentsToSkip = originalBatchTorrents || torrents;
+        const currentBatchHashes = new Set(batchTorrentsToSkip.map((t) => t.hash));
         const existingMovies = new Set();
 
         allTorrents.forEach((torrent) => {
@@ -150,14 +138,14 @@ class TorrentFilter {
         return { filtered, removed };
     }
 
-    async filterTorrents(torrents) {
+    async filterTorrents(torrents, allTorrents) {
         const initialCount = torrents.length;
         let result = torrents;
 
         const sizeFilter = await this.bySize(result);
         result = sizeFilter.filtered;
 
-        const dupFilter = await this.removeDuplicates(result);
+        const dupFilter = await this.removeDuplicates(result, allTorrents, torrents);
         result = dupFilter.filtered;
 
         const summary = {

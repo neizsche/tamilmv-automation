@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { createScraperClient } = require('../utils/httpClient');
-const { Timeouts } = require('../utils/constants');
+const { defaultClient } = require('../utils/httpClient');
 const config = require('../config');
 const { log } = require('../utils/logger');
 const { ensureFolderExists } = require('../utils/helpers');
@@ -9,7 +8,6 @@ const { ensureFolderExists } = require('../utils/helpers');
 class TorrentDownloader {
     constructor() {
         ensureFolderExists(config.TORRENT_FOLDER);
-        this.httpClient = createScraperClient({ timeout: Timeouts.FILE_DOWNLOAD });
     }
 
     async download(torrentLink, fileName) {
@@ -17,7 +15,7 @@ class TorrentDownloader {
 
         try {
             const writer = fs.createWriteStream(filePath);
-            const response = await this.httpClient.get(torrentLink, {
+            const response = await defaultClient.get(torrentLink, {
                 responseType: 'stream',
             });
             response.data.pipe(writer);
@@ -54,7 +52,7 @@ class TorrentDownloader {
         }
     }
 
-    delete(fileName) {
+    deleteFile(fileName) {
         const filePath = path.resolve(config.TORRENT_FOLDER, fileName);
 
         try {
@@ -66,25 +64,6 @@ class TorrentDownloader {
         } catch (error) {
             log.warning(`Error deleting file: ${filePath}`, error.message);
             return false;
-        }
-    }
-
-    cleanupOrphaned() {
-        try {
-            const files = fs.readdirSync(config.TORRENT_FOLDER);
-            const torrentFiles = files.filter((f) => f.endsWith('.torrent'));
-
-            if (torrentFiles.length > 0) {
-                log.info(`Cleaning up ${torrentFiles.length} orphaned torrent files`);
-                torrentFiles.forEach((file) => {
-                    this.delete(file);
-                });
-            }
-
-            return torrentFiles.length;
-        } catch (error) {
-            log.warning('Error cleaning up old torrent files', error.message);
-            return 0;
         }
     }
 

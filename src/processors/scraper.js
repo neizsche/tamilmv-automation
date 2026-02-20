@@ -1,17 +1,14 @@
 const cheerio = require('cheerio');
-const { createScraperClient } = require('../utils/httpClient');
-const { RetryConfig } = require('../utils/constants');
+const { defaultClient } = require('../utils/httpClient');
 const { wait } = require('../utils/helpers');
 const { log } = require('../utils/logger');
 
 class TorrentScraper {
-    constructor() {
-        this.httpClient = createScraperClient();
-    }
+    constructor() { }
 
     async scrapeLinks(pageUrl) {
         try {
-            const { data } = await this.httpClient.get(pageUrl);
+            const { data } = await defaultClient.get(pageUrl);
             const $ = cheerio.load(data);
             const torrentLinks = [];
 
@@ -33,46 +30,37 @@ class TorrentScraper {
         }
     }
 
-    async scrapeWithRetry(
-        url,
-        maxRetries = RetryConfig.SCRAPING_MAX_RETRIES,
-        delayMs = RetryConfig.SCRAPING_DELAY
-    ) {
-        let attempts = 0;
-        let links = [];
-
-        while (attempts < maxRetries) {
-            links = await this.scrapeLinks(url);
-            if (links.length > 0) break;
-
-            attempts++;
-            if (attempts < maxRetries) await wait(delayMs);
-        }
-
-        if (links.length === 0) {
-            log.warning(`Failed to scrape any links from ${url} after ${maxRetries} attempts.`);
-        }
-
-        return links;
-    }
-
     async scrapeAll(items, delayMs = 200) {
         const links = [];
+        const BATCH_SIZE = 5;
 
-        for (const item of items) {
+        for (let i = 0; i < items.length; i += BATCH_SIZE) {
+            const batch = items.slice(i, i + BATCH_SIZE);
+
             try {
-                const itemLinks = await this.scrapeLinks(item.link);
-                if (itemLinks && itemLinks.length > 0) {
-                    links.push(...itemLinks);
-                }
+                const batchResults = await Promise.all(
+                    batch.map(async (item) => {
+                        try {
+                            const itemLinks = await this.scrapeLinks(item.link);
+                            return itemLinks || [];
+                        } catch (error) {
+                            log.error(`Failed to scrape ${item.title}: ${error.message}`);
+                            return [];
+                        }
+                    })
+                );
 
-                await wait(delayMs);
+                links.push(...batchResults.flat());
             } catch (error) {
-                log.error(`Failed to scrape ${item.title}: ${error.message}`);
+                log.error(`Error in scraping batch: ${error.message}`);
+            }
+
+            if (i + BATCH_SIZE < items.length) {
+                await wait(delayMs);
             }
         }
 
-        return links.flat();
+        return links;
     }
 }
 

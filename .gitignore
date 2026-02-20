@@ -1,11 +1,9 @@
 node_modules/
-temp/*
+temp/
 coverage/
+*.tmp
+
+.env
+
 *.xml
 !config/*.xml
-.env
-.DS_Store
-*.log
-*.tmp
-*.log.gz
-*.json

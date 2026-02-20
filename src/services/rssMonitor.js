@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { defaultClient } = require('../utils/httpClient');
 const { XMLParser } = require('fast-xml-parser');
 const fs = require('fs');
 const path = require('path');
@@ -16,6 +16,15 @@ class RSSMonitor {
         ensureFolderExists(config.FEED_FOLDER);
     }
 
+    _parseXML(feedContent) {
+        const feed = this.parser.parse(feedContent);
+        return feed.rss && feed.rss.channel && feed.rss.channel.item
+            ? Array.isArray(feed.rss.channel.item)
+                ? feed.rss.channel.item
+                : [feed.rss.channel.item]
+            : [];
+    }
+
     initializeLastPubDate(feedKey, ignoreFeed = false, days = 2) {
         const feedFile = path.join(config.FEED_FOLDER, `feed_${feedKey}.xml`);
         if (ignoreFeed) {
@@ -31,13 +40,7 @@ class RSSMonitor {
         } else {
             try {
                 const feedContent = fs.readFileSync(feedFile, 'utf-8');
-                const feed = this.parser.parse(feedContent);
-                const items =
-                    feed.rss && feed.rss.channel && feed.rss.channel.item
-                        ? Array.isArray(feed.rss.channel.item)
-                            ? feed.rss.channel.item
-                            : [feed.rss.channel.item]
-                        : [];
+                const items = this._parseXML(feedContent);
 
                 if (items.length > 0) {
                     const date = new Date(items[0].pubDate);
@@ -69,12 +72,7 @@ class RSSMonitor {
         log.debug(`[${feedKey}] Fetching feed from ${feedUrl}...`);
 
         try {
-            const response = await axios.get(feedUrl, {
-                timeout: 30000,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                },
-            });
+            const response = await defaultClient.get(feedUrl);
 
             // REPLACE DOMAINS IN CONTENT
             // This ensures that all links in the feed point to the currently working domain
@@ -90,13 +88,7 @@ class RSSMonitor {
             fs.renameSync(tempFile, feedFile); // Atomic rename
 
             const feedContent = fs.readFileSync(feedFile, 'utf-8');
-            const feed = this.parser.parse(feedContent);
-            const items =
-                feed.rss && feed.rss.channel && feed.rss.channel.item
-                    ? Array.isArray(feed.rss.channel.item)
-                        ? feed.rss.channel.item
-                        : [feed.rss.channel.item]
-                    : [];
+            const items = this._parseXML(feedContent);
             const newItems = [];
 
             let skippedCount = 0;

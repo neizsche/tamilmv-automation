@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { ntfyClient } = require('../utils/httpClient');
 const config = require('../config');
 const { log } = require('../utils/logger');
 
@@ -14,11 +14,7 @@ class Notifier {
                 tags: tags,
             };
 
-            await axios.post(config.NTFY.SERVER, payload, {
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            });
+            await ntfyClient.post(config.NTFY.SERVER, payload);
 
             return true;
         } catch (error) {

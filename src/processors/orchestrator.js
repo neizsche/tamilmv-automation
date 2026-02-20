@@ -9,7 +9,7 @@ const state = require('../services/state');
 const downloader = require('./downloader');
 const scraper = require('./scraper');
 const filter = require('./filter');
-const radarr = require('./radarr');
+const radarr = require('../services/radarr');
 
 class TorrentOrchestrator {
     async processSingle(torrentLink) {
@@ -19,17 +19,17 @@ class TorrentOrchestrator {
         try {
             const downloadSuccess = await downloader.download(torrentLink, fileName);
             if (!downloadSuccess) {
-                downloader.delete(fileName);
+                downloader.deleteFile(fileName);
                 return false;
             }
 
             const uploadSuccess = await qbittorrent.addTorrent(filePath);
-            downloader.delete(fileName);
+            downloader.deleteFile(fileName);
 
             return uploadSuccess;
         } catch (error) {
             log.error(`Error processing torrent link: ${torrentLink}`, error);
-            downloader.delete(fileName);
+            downloader.deleteFile(fileName);
             return false;
         }
     }
@@ -40,11 +40,8 @@ class TorrentOrchestrator {
         }
     }
 
-    async _verifyStoppedTorrents(torrentHashes) {
+    async _verifyStoppedTorrents(torrentHashes, allStoppedTorrents) {
         if (!torrentHashes || torrentHashes.length === 0) return;
-
-        await wait(2000);
-        const allStoppedTorrents = await qbittorrent.getTorrents(true);
 
         const stoppedTorrents = allStoppedTorrents.filter((t) => torrentHashes.includes(t.hash));
 
@@ -59,15 +56,14 @@ class TorrentOrchestrator {
         }
     }
 
-    async _cleanupOrphanedStoppedTorrents() {
+    async _cleanupOrphanedStoppedTorrents(allStoppedTorrents) {
         try {
-            const allStoppedTorrents = await qbittorrent.getTorrents(true);
-            if (allStoppedTorrents.length === 0) return;
+            if (!allStoppedTorrents || allStoppedTorrents.length === 0) return;
 
             const torrentsToDelete = [];
 
             for (const torrent of allStoppedTorrents) {
-                const movieStatus = await require('./radarr')._checkStatus(torrent);
+                const movieStatus = await radarr._checkStatusProcessor(torrent);
                 if (movieStatus.movieStatus.exists && movieStatus.movieStatus.hasFile) {
                     torrentsToDelete.push(torrent);
                 }
@@ -96,9 +92,17 @@ class TorrentOrchestrator {
         };
 
         try {
-            let torrents = await qbittorrent.getTorrents(true);
+            const allTorrents = await qbittorrent.getTorrents(false);
 
-            const filterResult = await filter.filterTorrents(torrents);
+            let torrents = allTorrents.filter(
+                (torrent) =>
+                    torrent.progress === 0 &&
+                    torrent.state === 'stoppedDL' &&
+                    torrent.tags === config.QBITTORRENT.TAG &&
+                    torrent.category === config.QBITTORRENT.CATEGORY_ACTIVE
+            );
+
+            const filterResult = await filter.filterTorrents(torrents, allTorrents);
             torrents = filterResult.remaining;
             stats.filterSummary = filterResult.summary;
 
@@ -153,12 +157,15 @@ class TorrentOrchestrator {
 
             stats.moviesAdded = movieProcessing.size;
 
+            await wait(2000);
+            const freshStoppedTorrents = await qbittorrent.getTorrents(true);
+
             const hashesToVerify = torrentsToStart.map((t) => t.hash);
-            await this._verifyStoppedTorrents(hashesToVerify);
+            await this._verifyStoppedTorrents(hashesToVerify, freshStoppedTorrents);
 
             // Stricter cleanup: Remove ANY stopped torrent with our tag that we didn't just start
 
-            await this._cleanupOrphanedStoppedTorrents();
+            await this._cleanupOrphanedStoppedTorrents(freshStoppedTorrents);
         } catch (error) {
             log.error('Error cleaning unwanted torrents', error);
         }
@@ -238,8 +245,6 @@ class TorrentOrchestrator {
 
             const detailsStr = detailParts.length > 0 ? `(${detailParts.join(', ')})` : '';
             stats.filterSummary = `${s.initial} -> ${s.remaining} ${detailsStr}`;
-
-            downloader.cleanupOrphaned();
         } catch (error) {
             log.error('Error processing new items', error);
         }
